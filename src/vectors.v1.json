@@ -84,6 +84,14 @@
       "passcode": "hunter2",
       "plaintext": "[{\"key\":\"username\",\"value\":\"ada@example.com\",\"type\":\"text\"},{\"key\":\"password\",\"value\":\"correct horse battery staple\",\"type\":\"password\"}]",
       "blob": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u6S7xpUaptmi0DnraQAo/iV7FB/K7oQqL3MgdUKSkPo0wL9vyUdsky3ILmkG3vZkc+fbp1LCkDzk6y187FeszuOowYkC05z0iMfLQpZ4incr8TQ74S4XMN6xGgBJwzS78RCWs+ZJG3EfgQyk1farwjL3gW5Le2LqbcWHiWkS39rKUqR+Z9FfWJ8AM65zFE0ks9Tu0EGHr4h1"
+    },
+    {
+      "name": "characters a JSON serialiser may mangle: HTML escapes, quotes, unicode",
+      "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "salt": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+      "iv": "b0b1b2b3b4b5b6b7b8b9babb",
+      "plaintext": "[{\"key\":\"Q & A <tag>\",\"value\":\"a > b && c < d\",\"type\":\"text\"},{\"key\":\"quotes \\\"and\\\" backslash \\\\\",\"value\":\"tab\\t here / slash\",\"type\":\"text\"},{\"key\":\"ünïcödé\",\"value\":\"πασσ — em dash, and an emoji 🔐\",\"type\":\"text\"}]",
+      "blob": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u1YWPEhJhUdlUAIfdNrzo1nsiSU7zLhfTm8olvQvVfDJB881z3M45FcEc0mxk0O0AzWssb0Ts6+agY+gzNgqBlrtd6LYQnU/GjNsFOpgWgpR8qzDL+QliIDX2dW5L2Wo+yiwT1k7DQf35q5dBDc78SrHCtnSiyJHCcVYoiTDMaoY2FAeC8m7AdUuBWuQzu0XV3IANCcsRH5jPSWrs/ew4JAUx3GqmJMIzzbr1RuS0VAVzV2vjCsW/cPtz3M+fNWyPOk1HwzA7W7CK1ZCsslmtSUWPfOOF0oI0eFQ/H45H5ZUtTmS9k/mR2qTOJcKdZono/IR9keD"
     }
   ],
   "seed_keypair": [
