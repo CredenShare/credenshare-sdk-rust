@@ -160,7 +160,7 @@ fn parse(header: &str) -> Result<(i64, Vec<String>), VerificationError> {
 }
 
 fn unhex(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 {
+    if !text.len().is_multiple_of(2) {
         return None;
     }
     (0..text.len())
