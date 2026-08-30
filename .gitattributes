@@ -1,0 +1,8 @@
+# LF everywhere, including on Windows checkouts.
+#
+# This is not a style preference. `src/vectors.v1.json` is embedded with include_str! and pinned
+# by SHA-256, and the digest is of the LF bytes. Left to Git's default on Windows the file
+# checks out with CRLF, the digest test fails, and the failure appears only on Windows — so CI's
+# Linux jobs stay green while a contributor on Windows is told the fixture has been tampered
+# with.
+* text=auto eol=lf

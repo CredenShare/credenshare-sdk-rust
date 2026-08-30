@@ -1,0 +1,9 @@
+CredenShare SDK for Rust
+Copyright 2026 CredenShare Inc.
+
+Dual-licensed under MIT OR Apache-2.0, which is the Rust ecosystem's convention: MIT for
+permissiveness, Apache-2.0 for its explicit patent grant. Take whichever suits you.
+
+This SDK is open source because it has to be. It performs the encryption, so the claim that
+CredenShare cannot read your data is only checkable if the code doing the encrypting can be
+read. A closed client would make that claim unverifiable.
