@@ -2,7 +2,11 @@
 name = "credenshare"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.74"
+# Measured, not asserted. 1.74 was a guess and CI refuted it: a transitive dependency
+# (base64ct, via p256) now ships edition 2024, which Cargo below 1.85 cannot even parse. The
+# floor is whatever the dependency tree actually demands, and the MSRV job in CI is what proves
+# it - raise this only in response to a green run, never to a hope.
+rust-version = "1.85"
 description = "End-to-end encrypted secret sharing. Encryption happens on your machine."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/CredenShare/credenshare-sdk-rust"

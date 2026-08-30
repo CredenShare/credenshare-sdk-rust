@@ -69,10 +69,16 @@ fn the_embedded_fixture_has_not_been_edited() {
 
 #[test]
 fn the_embedded_fixture_matches_the_published_one() {
-    let Ok(url) = std::env::var("CREDENSHARE_VECTORS_URL") else {
+    // env::var distinguishes UNSET from SET-BUT-EMPTY, and the other three SDKs do not: in
+    // Python, Node and Go an empty value is falsy and skips. CI sets this from a repository
+    // variable, and an undefined variable arrives as the empty string - so `Ok("")` sailed
+    // past a `let Ok(url) = ...` guard and ureq failed with RelativeUrlWithoutBase. Treating
+    // empty as unset is what makes the skip mean what it says.
+    let url = std::env::var("CREDENSHARE_VECTORS_URL").unwrap_or_default();
+    if url.trim().is_empty() {
         eprintln!("skipped: set CREDENSHARE_VECTORS_URL to check against the published fixture");
         return;
-    };
+    }
 
     // Byte-for-byte, not semantically: a whitespace-only difference still means the two files
     // came from different generator runs, and that is worth knowing before it becomes a
