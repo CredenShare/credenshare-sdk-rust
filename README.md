@@ -181,9 +181,9 @@ that has to be rotated.
 
 ## The wire specification
 
-This crate implements the published CredenShare wire and crypto specification. **The
-specification is normative — not this code**, and not any other implementation. Where they
-disagree, this is the bug.
+This crate implements the [published CredenShare wire and crypto specification](https://github.com/CredenShare/credenshare-spec).
+**The specification is normative — not this code**, and not any other implementation.
+Where they disagree, this is the bug.
 
 The application and the four SDKs share no code, deliberately: a package the production
 application depended on would mean a compromised publish is a compromised application. The cost

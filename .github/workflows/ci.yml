@@ -93,12 +93,16 @@ jobs:
         # The URL is configuration rather than a constant because the specification lives in a
         # private repository, so this needs a URL the runner can actually reach.
         env:
-          CREDENSHARE_VECTORS_URL: ${{ vars.CREDENSHARE_VECTORS_URL }}
+          # Defaults to the published fixture, so drift detection runs with no
+          # configuration. It was OFF in every repo until the spec was published,
+          # because the variable had nowhere reachable to point — the one mechanism
+          # holding five implementations together had never actually run.
+          CREDENSHARE_VECTORS_URL: ${{ vars.CREDENSHARE_VECTORS_URL || 'https://raw.githubusercontent.com/CredenShare/credenshare-spec/main/conformance/vectors.v1.json' }}
         run: |
           if [ -z "${CREDENSHARE_VECTORS_URL}" ]; then
             # Loud, not silent. A skipped drift check reads as a passing one on the summary
             # page, and this is the single job whose silence is expensive.
-            echo "::warning title=Drift detection is NOT running::Set the repository variable CREDENSHARE_VECTORS_URL to a reachable copy of the published vectors.v1.json. Until then nothing verifies that this SDK's fixture matches the specification, and divergence will surface as content that cannot be decrypted."
+            echo "::warning title=Drift detection is NOT running::CREDENSHARE_VECTORS_URL resolved empty, which should be impossible now that it defaults to the published fixture. Set the repository variable CREDENSHARE_VECTORS_URL to a reachable copy of the published vectors.v1.json. Until then nothing verifies that this SDK's fixture matches the specification, and divergence will surface as content that cannot be decrypted."
           fi
           cargo test --test conformance -- --nocapture the_embedded_fixture
 

@@ -1,0 +1,79 @@
+name: Release
+
+# Tag-triggered. Publishing to crates.io is irreversible — a version can be yanked but never
+# reused, and never replaced — so everything is verified before the publish step runs.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: verify before anything is published
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all-targets
+      - run: cargo run --bin credenshare-conformance -- -v
+
+      - name: The crypto must still compile without the client
+        # The crate promises a caller can take the crypto alone. Releasing a version where
+        # that stopped being true would break exactly the embedded targets it was promised
+        # for, and they are the least likely to notice quickly.
+        run: cargo build --no-default-features
+
+      - name: The tag must match the version in Cargo.toml
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::tag v$TAG does not match Cargo.toml version $VERSION"
+            exit 1
+          fi
+          echo "releasing $VERSION"
+
+      - name: The packaged crate must carry the fixture
+        # `include` in Cargo.toml decides what ships. A packaging mistake that dropped the
+        # vectors would leave every consumer's self-check failing on an install that is
+        # otherwise fine — and on crates.io that version can never be corrected, only
+        # yanked and replaced.
+        run: |
+          cargo package --allow-dirty
+          cargo package --list --allow-dirty | grep -qx 'src/vectors.v1.json' \
+            || { echo "::error::the conformance vectors are not in the packaged crate"; exit 1; }
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/credenshare
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # CARGO_REGISTRY_TOKEN is a repository secret. crates.io has no OIDC trusted-publishing
+      # equivalent to PyPI's or npm's yet, so this is the one release path in the four that
+      # still needs a long-lived credential. Scope it to publish-update on this crate only.
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN is not set; add it as a repository secret"
+            exit 1
+          fi
+          cargo publish
