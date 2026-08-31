@@ -50,6 +50,10 @@ jobs:
 
       - run: cargo build --all-targets
       - run: cargo test --all-targets
+      # --all-targets EXCLUDES doctests. lib.rs includes the README specifically so its
+      # examples are compiled, and without this line nothing ever compiled them - the exact
+      # gap that arrangement was introduced to close.
+      - run: cargo test --doc
 
       - name: The crypto must compile without the client
         # The crate claims a caller can take the crypto alone. A claim nothing exercises is a
@@ -119,12 +123,15 @@ jobs:
           # nothing exits 0, so renaming a test would turn this job green while checking
           # nothing at all - the one failure mode a drift check cannot afford.
           cargo test --test conformance -- --nocapture --exact             the_embedded_fixture_has_not_been_edited             the_embedded_fixture_matches_the_published_one | tee /tmp/drift.txt
-          if [ -n "${CREDENSHARE_VECTORS_URL}" ]; then
-            grep -q "2 passed" /tmp/drift.txt || {
-              echo "::error::expected both fixture tests to run; the names have moved"
-              exit 1
-            }
-          fi
+          # UNCONDITIONAL. Both tests report as passed even with the URL unset - the
+          # published-comparison one returns early and says it skipped - so guarding this
+          # on the variable meant the anti-rename check never ran in the SHIPPED state,
+          # which is the only state it needs to work in. A renamed or deleted fixture
+          # test would have turned this job green while checking nothing.
+          grep -q "2 passed" /tmp/drift.txt || {
+            echo "::error::expected both fixture tests to run and pass; the names have moved"
+            exit 1
+          }
 
   package:
     name: the published crate carries the fixture

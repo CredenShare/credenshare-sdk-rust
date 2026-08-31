@@ -33,6 +33,16 @@ const IDEMPOTENCY_CONFLICT_CODE: i64 = 105;
 /// 5xx may have committed, and this client cannot tell. A create is safe to retry because the
 /// Idempotency-Key and the body are both identical on the second attempt — which is the entire
 /// reason the header is mandatory.
+/// The most pages [`CredenShare::for_each_share`] will walk before giving up.
+///
+/// A bound exists because the end of the result set is not always knowable: a server that
+/// omits both `total_pages` and `total` and returns full pages forever cannot be told from a
+/// very large account. An unbounded walk against one hangs the caller's process and re-feeds
+/// the visitor the same rows; a bounded one fails with a message naming the cause.
+///
+/// At the default page size of 100 this is ten million shares.
+pub const MAX_PAGES: u32 = 100_000;
+
 pub const DEFAULT_MAX_RETRIES: u32 = 2;
 
 const CREDENTIAL_PREFIX: &str = "crs_sk_live_";
@@ -431,11 +441,29 @@ impl CredenShare {
         let mut page = 1u32;
         loop {
             let batch = self.list_shares(limit, page)?;
+
+            // A server that echoes a constant page number makes progress unobservable, and
+            // has_more's last-resort fallback (a full page probably has a successor) would
+            // then loop forever on the same rows. Terminate loudly instead of hanging.
+            if batch.page != page {
+                return Err(Error::Internal(
+                    "the API echoed a different page number than the one requested, so paging \
+                     cannot be trusted to terminate",
+                ));
+            }
+
             for share in &batch.shares {
                 visit(share)?;
             }
             if !batch.has_more() {
                 return Ok(());
+            }
+            if page >= MAX_PAGES {
+                return Err(Error::InternalOwned(format!(
+                    "stopped after {MAX_PAGES} pages without the API signalling the end of the \
+                     result set; it sent neither total_pages nor total, and every page came \
+                     back full"
+                )));
             }
             page += 1;
         }

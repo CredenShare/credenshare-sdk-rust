@@ -52,9 +52,14 @@ pub const FIELD_TYPES: [&str; 6] = [
 /// anywhere. Rust's types stop that spelling at compile time for a struct literal; the
 /// deserialising path is where it can still reach you, which is what [`validate_fields`] is
 /// for.
-// Eq is deliberately absent: `extra` holds serde_json::Value, which is only PartialEq
-// because it can carry floats.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+// `Default` is derived so that adding `extra` did not break every external struct literal:
+// `Field { key, value, field_type, ..Default::default() }` compiles.
+//
+// `Eq` is deliberately absent. `extra` holds `serde_json::Value`, which is only `PartialEq`
+// because it can carry floats. That is a source break for anything with an `Eq` bound or a
+// `HashSet<Field>` - recorded in CHANGELOG.md, and the reason is that the alternative was to
+// keep dropping a newer sender's members on every decrypt/re-encrypt round trip, silently.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Field {
     pub key: String,
     pub value: String,

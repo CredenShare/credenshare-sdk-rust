@@ -26,6 +26,8 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
+      # --all-targets excludes doctests; the README examples are doctests.
+      - run: cargo test --doc
         # Same opt-in variable CI uses. Without it here, a release is the only build
         # that never checks the fixture against the canonical copy.
         env:
