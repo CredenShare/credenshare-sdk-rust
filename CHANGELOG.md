@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3 — released 2026-08-30
+
+No code change from 0.1.2. Cut to exercise the publish path with no stored credential: the npm
+`NPM_TOKEN` bootstrap secret is deleted and publication now runs on OIDC trusted publishing, so
+nothing long-lived exists in any repository that could publish this package.
+
+
 ## 0.1.2 — released 2026-08-30
 
 The first version published to a package registry. No code change from 0.1.1: the conformance
