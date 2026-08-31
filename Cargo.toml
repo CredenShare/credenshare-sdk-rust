@@ -1,6 +1,6 @@
 [package]
 name = "credenshare"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 # Measured by CI, twice. 1.74 was a guess; 1.85 was the edition-2024 floor that base64ct
 # forced; 1.88 is what the icu_* crates demand, and they arrive through the OPTIONAL client

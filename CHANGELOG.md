@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2 — released 2026-08-30
+
+The first version published to a package registry. No code change from 0.1.1: the conformance
+fixture is byte-identical and every client still reports 24/24. Cut so that the published
+version's own release workflow carries the npm OIDC version floor, which is what allows npm
+publishing to move off a token immediately afterwards.
+
+
 ## 0.1.1 — released 2026-08-30
 
 `v0.1.0` was tagged before the release-facing files were corrected, so the artifact resolved at

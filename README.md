@@ -6,7 +6,7 @@ system rather than a promise.
 
 ```toml
 [dependencies]
-credenshare = { git = "https://github.com/CredenShare/credenshare-sdk-rust", tag = "v0.1.1" }
+credenshare = { git = "https://github.com/CredenShare/credenshare-sdk-rust", tag = "v0.1.2" }
 ```
 > Not on crates.io yet. The command above installs from source, which is a
 > supported way to use this SDK - the conformance self-check runs the same either way.
@@ -48,7 +48,7 @@ encrypts correctly is the wrong place to be clever.
 The `client` feature is on by default. Turn it off to compile only the crypto:
 
 ```toml
-credenshare = { git = "https://github.com/CredenShare/credenshare-sdk-rust", tag = "v0.1.1", default-features = false }
+credenshare = { git = "https://github.com/CredenShare/credenshare-sdk-rust", tag = "v0.1.2", default-features = false }
 ```
 
 A caller that posts with its own HTTP client, or runs somewhere a TLS stack would be dead
