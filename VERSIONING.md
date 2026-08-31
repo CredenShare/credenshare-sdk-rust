@@ -61,29 +61,103 @@ The next tag publishes. Nothing else changes.
 
 ## Before the FIRST registry upload: what must exist
 
-Nothing has been released yet — all four sit at `0.1.0` with **zero tags**. Tagging before the
-items below exist produces a red release run, and for Go a tag that cannot be withdrawn.
+Nothing has been uploaded to a registry yet. All three names were free as of 2026-08-30:
+`credenshare` on PyPI, `@credenshare/sdk` on npm, `credenshare` on crates.io.
 
-**These are per-repository settings, and deleting and recreating a repository destroys every
-one of them.** That happened on 2026-08-30, so anything configured before that date is gone
-and must be redone.
+**The GitHub side is already done** (2026-08-30): the `pypi`, `npm` and `crates-io`
+environments exist on their repositories, and each carries `PUBLISH_TO_REGISTRY=false`. What
+remains is a registry account per ecosystem, and one secret for two of the three.
 
-| Repo | Needs | Notes |
-| ---- | ----- | ----- |
-| Python | A PyPI **trusted publisher** for `CredenShare/credenshare-sdk-python`, workflow `release.yml`, environment `pypi`; plus a `pypi` environment on the repo | No stored token. Configure at pypi.org before the tag, or the OIDC exchange is refused |
-| Node | An `npm` environment on the repo, and npm publishing rights for `@credenshare/sdk` | `--provenance` needs `id-token: write`, which the workflow has |
-| Rust | A `crates-io` environment holding `CARGO_REGISTRY_TOKEN` | The only long-lived registry credential of the four. Scope it to publish-update on `credenshare` alone |
-| Go | **Nothing.** | The tag *is* the release. This is also why Go is the only one that can be released today |
+Two different mechanisms are in play, and the distinction matters:
 
-Verify before tagging, not after:
+- **OIDC trusted publishing** (PyPI, npm) — no long-lived credential. The registry trusts
+  *this workflow, on this repository, in this environment*, and mints a token per run. Nothing
+  to leak, nothing to rotate.
+- **A long-lived API token** (crates.io) — no OIDC equivalent exists there yet.
+
+### PyPI — trusted publishing, and it works before the name exists
+
+PyPI supports a *pending* publisher, which is exactly this case: the project does not exist and
+the first publish claims it.
+
+1. Create an account at **pypi.org** and enable 2FA. Publishing requires it.
+2. Go to **Account settings → Publishing → Add a new pending publisher**, choose GitHub, and
+   fill in **exactly** these values:
+
+   | Field | Value |
+   | ----- | ----- |
+   | PyPI Project Name | `credenshare` |
+   | Owner | `CredenShare` |
+   | Repository name | `credenshare-sdk-python` |
+   | Workflow name | `release.yml` |
+   | Environment name | `pypi` |
+
+   The environment name is the usual thing to get wrong: it must match the `environment:` in
+   `release.yml`, which is `pypi`. A mismatch fails the OIDC exchange with a message that does
+   not obviously say so.
+3. No secret is added to GitHub. That is the point of this mechanism.
+
+### npm — an org, then either mechanism
+
+`@credenshare/sdk` is a *scoped* package, so the scope has to exist and be yours.
+
+1. Create an account at **npmjs.com** and enable 2FA.
+2. Create the organisation **`credenshare`** (npmjs.com → your avatar → *Add an
+   Organization*). Free for public packages. This is what makes the `@credenshare` scope yours.
+3. Then either:
+   - **A granular token, which definitely works for a first publish.** Access Tokens →
+     *Generate New Token* → **Granular Access Token**. Give it *Read and write* on
+     **Packages and scopes → `@credenshare/*`**, and the shortest expiry you will tolerate.
+     Add it to the repository as the secret **`NPM_TOKEN`**, inside the `npm` environment.
+   - **Or trusted publishing**, configured on the package's npm settings page. npm generally
+     wants the package to *exist* before a publisher can be attached to it, which is why the
+     token path is the reliable way to get the first version out.
+
+   `release.yml` accepts both: it passes `NODE_AUTH_TOKEN` from `NPM_TOKEN` when that secret is
+   present, and falls back to OIDC when it is not. Once the package exists and a trusted
+   publisher is configured, **delete the `NPM_TOKEN` secret** and the OIDC path takes over with
+   no other change.
+
+   `--provenance` needs a public repository (these are) and `id-token: write` (the job has it).
+
+### crates.io — a token, because there is no alternative
+
+1. Sign in at **crates.io** with GitHub.
+2. **Account Settings → API Tokens → New Token**. Scopes: **`publish-new`** and
+   **`publish-update`**. Leave the crate scope empty for the first publish — a token cannot be
+   scoped to a crate that does not exist yet. After `credenshare` exists, replace it with a
+   token scoped to that crate alone.
+3. Add it to the repository as the secret **`CARGO_REGISTRY_TOKEN`**, inside the `crates-io`
+   environment.
+
+### Go — nothing
+
+The tag *is* the release; the module proxy serves it straight from the repository. This is also
+why Go was the only one releasable before any of the above existed.
+
+### Then, per repository
+
+Add the secret to the **environment**, not just the repository, so it is scoped to the job that
+needs it: *Settings → Environments → (`npm` | `crates-io`) → Add environment secret*.
+
+Finally flip the switch: *Settings → Secrets and variables → Actions → Variables* and set
+**`PUBLISH_TO_REGISTRY`** to `true`. The next tag publishes. Nothing else changes.
+
+### Verifying before you tag
 
 ```bash
-gh api repos/CredenShare/credenshare-sdk-node/environments   # expect the environment to exist
+gh api repos/CredenShare/credenshare-sdk-node/environments --jq '.environments[].name'
+gh api repos/CredenShare/credenshare-sdk-node/actions/variables --jq '.variables[]|"\(.name)=\(.value)"'
 ```
 
-The package names are unclaimed on PyPI, npm and crates.io as of 2026-08-30. Until they are
-published, every README installs from source — which works, and whose conformance self-check
-behaves identically, so an install is verifiable either way.
+A tag with the switch off is still useful — it verifies the tag against the manifest, runs the
+full suite and creates a GitHub Release. Only the upload is skipped, with a notice saying so.
+
+### One thing that cannot be undone
+
+**Deleting and recreating a repository destroys its environments, secrets and variables**, and
+PyPI's trusted publisher is bound to the repository *name*, so it survives — but the GitHub
+half does not. That happened on 2026-08-30 and is why this section exists.
 
 ## Cutting a release
 
@@ -106,12 +180,18 @@ report.
 
 ### What differs per language
 
-**Python** and **Node** publish through **OIDC trusted publishing**, so there is no long-lived
-registry token in either repository.
+Setup is above; this is what each mechanism means once it is running.
 
-**Rust** still needs a `CARGO_REGISTRY_TOKEN` secret: crates.io has no trusted-publishing
-equivalent yet. It is the only long-lived registry credential in the four, and it should be
-scoped to publish-update on the `credenshare` crate alone.
+**Python** publishes through **OIDC trusted publishing** — no stored credential at all.
+
+**Node** can do either, and the workflow accepts both: it uses `NPM_TOKEN` when that secret
+exists and falls back to OIDC when it does not. The token path is what gets the first version
+out, because npm generally wants a package to exist before a trusted publisher can be attached
+to it. Delete the secret once a publisher is configured.
+
+**Rust** needs a `CARGO_REGISTRY_TOKEN` secret: crates.io has no trusted-publishing equivalent
+yet. It is the only unavoidable long-lived registry credential of the four, and after the first
+publish it should be replaced with one scoped to the `credenshare` crate alone.
 
 **Go has no publish step at all** — the tag *is* the release, resolved straight from the
 repository by the module proxy. Two consequences worth internalising:
