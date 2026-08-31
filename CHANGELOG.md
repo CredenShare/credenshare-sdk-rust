@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.4 — released 2026-08-30
+
+The first version whose install instructions are the registry ones, because 0.1.3 is on the
+registries. Also fixes a version string that had drifted.
+
+### Fixed
+
+- **The in-code version constant was stale.** It read `0.1.0` while `0.1.3` was published: the
+  release guard compared the TAG to the manifest and never to this second copy. Rust was already correct - `Cargo.toml` is the single source.
+
+### Documentation
+
+- The install line is the registry command rather than a git URL.
+
+
 ## 0.1.3 — released 2026-08-30
 
 No code change from 0.1.2. Cut to exercise the publish path with no stored credential: the npm
