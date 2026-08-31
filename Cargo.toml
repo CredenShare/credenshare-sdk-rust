@@ -13,7 +13,6 @@ description = "End-to-end encrypted secret sharing. Encryption happens on your m
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/CredenShare/credenshare-sdk-rust"
 homepage = "https://credenshare.io"
-documentation = "https://docs.rs/credenshare"
 readme = "README.md"
 keywords = ["credenshare", "secrets", "encryption", "e2ee", "zero-knowledge"]
 categories = ["cryptography", "api-bindings"]
@@ -52,5 +51,8 @@ client = ["dep:ureq"]
 name = "credenshare-conformance"
 path = "src/bin/conformance.rs"
 
+# Governs THIS crate's own test and binary builds only. Cargo ignores a dependency's
+# [profile] section, so a consumer of the published crate does not get this - it is a local
+# development setting, not a guarantee about released code.
 [profile.release]
 overflow-checks = true

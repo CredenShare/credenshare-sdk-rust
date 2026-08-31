@@ -29,6 +29,7 @@ use p256::elliptic_curve::ops::Reduce;
 use p256::{NonZeroScalar, PublicKey, Scalar, SecretKey, U256};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use sha2::Sha256;
 
 use crate::errors::{Error, Result};
@@ -50,12 +51,24 @@ pub const FIELD_TYPES: [&str; 6] = [
 /// anywhere. Rust's types stop that spelling at compile time for a struct literal; the
 /// deserialising path is where it can still reach you, which is what [`validate_fields`] is
 /// for.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// Eq is deliberately absent: `extra` holds serde_json::Value, which is only PartialEq
+// because it can carry floats.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Field {
     pub key: String,
     pub value: String,
     #[serde(rename = "type")]
     pub field_type: String,
+
+    /// Members this version does not know about, preserved so a field written by a newer
+    /// sender survives being read and written again here.
+    ///
+    /// Declared LAST and flattened, so the three known members keep their declaration order
+    /// on the wire — which is the order the conformance vectors compare against. Without
+    /// this the struct is closed: unknown members are dropped on decrypt and gone on
+    /// re-encrypt, silently, and only whoever added the member ever finds out.
+    #[serde(flatten, default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
 }
 
 impl Field {
@@ -70,6 +83,7 @@ impl Field {
             key: key.into(),
             value: value.into(),
             field_type: field_type.into(),
+            extra: Map::new(),
         }
     }
 }
@@ -326,8 +340,11 @@ pub fn passcode_verifier(passcode: &str) -> Result<String> {
 /// Storing the seed rather than a serialized key is what lets an entire private key live in a
 /// URL fragment, and what lets ephemeral automation derive the same key with no local state.
 pub struct SeedKeypair {
-    pub seed: [u8; KEY_LEN],
-    pub scalar: [u8; KEY_LEN],
+    // Private. This struct hand-writes a Debug that withholds these two precisely because
+    // they are the private key; leaving them as pub fields made that gesture decorative.
+    // The accessors below still hand them out, but you have to ask by name.
+    pub(crate) seed: [u8; KEY_LEN],
+    pub(crate) scalar: [u8; KEY_LEN],
     pub(crate) secret: SecretKey,
     pub public_key_raw: [u8; PUBKEY_LEN],
 }
@@ -335,6 +352,19 @@ pub struct SeedKeypair {
 impl SeedKeypair {
     pub fn public_key_b64url(&self) -> String {
         B64URL.encode(self.public_key_raw)
+    }
+
+    /// The 32-byte seed the whole keypair derives from.
+    ///
+    /// This is private key material. It exists as a method rather than a field so that
+    /// reaching it is a deliberate act that shows up in a review.
+    pub fn seed(&self) -> &[u8; KEY_LEN] {
+        &self.seed
+    }
+
+    /// The private scalar. Private key material — see [`Self::seed`].
+    pub fn private_scalar(&self) -> &[u8; KEY_LEN] {
+        &self.scalar
     }
 }
 

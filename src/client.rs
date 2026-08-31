@@ -67,8 +67,18 @@ impl Credential {
             )));
         }
 
+        // parts[0] being non-empty only proves the PREFIX is there: "crs_sk_live_.secret"
+        // splits into two non-empty parts and yields an empty key id, which then goes out in
+        // an Authorization header that cannot identify anything.
+        let key_id = parts[0][CREDENTIAL_PREFIX.len()..].to_string();
+        if key_id.is_empty() {
+            return Err(Error::CredentialFormat(
+                "the credential has no key id between the prefix and the first '.'".to_string(),
+            ));
+        }
+
         Ok(Self {
-            key_id: parts[0][CREDENTIAL_PREFIX.len()..].to_string(),
+            key_id,
             auth_secret: parts[1].to_string(),
             custody_secret: parts.get(2).map(|s| s.to_string()),
         })
@@ -167,8 +177,21 @@ pub struct SharePage {
 }
 
 impl SharePage {
+    /// Whether another page exists.
+    ///
+    /// Falls back deliberately rather than answering `false` when the server omits the paging
+    /// figures: reporting "no more" on a full page is what makes [`Client::for_each_share`]
+    /// stop after page one and return a fraction of the account as though it were all of it.
     pub fn has_more(&self) -> bool {
-        matches!(self.total_pages, Some(total) if self.page < total)
+        if let Some(total_pages) = self.total_pages {
+            return self.page < total_pages;
+        }
+        if let Some(total) = self.total {
+            return u64::from(self.page) * u64::from(self.limit) < u64::from(total);
+        }
+        // Nothing to go on but the page itself: a full page probably has a successor, and a
+        // short one ends the walk.
+        !self.shares.is_empty() && self.shares.len() as u32 >= self.limit
     }
 }
 
@@ -349,23 +372,34 @@ impl CredenShare {
             &[],
         )?;
 
-        let shares = data
-            .get("shares")
-            .and_then(Value::as_array)
-            .map(|rows| {
-                rows.iter()
-                    .filter_map(|row| {
-                        Some(ShareSummary {
-                            short_code: row.get("short_code")?.as_str()?.to_string(),
-                            expired_at: row
-                                .get("expired_at")
-                                .and_then(Value::as_str)
-                                .map(str::to_string),
-                        })
+        // A row this client cannot read is an error, not an omission. Dropping it silently
+        // while `total` still reports the true count produces a list that is quietly short,
+        // and a reconciliation against it reports shares as missing that are not.
+        let shares: Vec<ShareSummary> = match data.get("shares").and_then(Value::as_array) {
+            None => Vec::new(),
+            Some(rows) => rows
+                .iter()
+                .map(|row| {
+                    let short_code =
+                        row.get("short_code")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| {
+                                Error::InternalOwned(
+                                    "a share row carried no string short_code; refusing to \
+                                     return a list that is silently short"
+                                        .to_string(),
+                                )
+                            })?;
+                    Ok(ShareSummary {
+                        short_code: short_code.to_string(),
+                        expired_at: row
+                            .get("expired_at")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
                     })
-                    .collect()
-            })
-            .unwrap_or_default();
+                })
+                .collect::<Result<Vec<_>>>()?,
+        };
 
         let pagination = data.get("pagination");
         let read = |name: &str| {
@@ -412,6 +446,7 @@ impl CredenShare {
     /// Does not consume a view, evaluate a passcode, or return content. A share belonging to
     /// another account reports exactly as one that does not exist.
     pub fn get_share(&self, short_code: &str) -> Result<ShareSummary> {
+        check_short_code(short_code)?;
         let data = self.request("GET", &format!("/shares/{short_code}"), None, &[], &[])?;
         Ok(ShareSummary {
             short_code: data
@@ -436,6 +471,7 @@ impl CredenShare {
     /// [`Self::list_shares`]. Worth knowing if you reconcile against your own records: a share
     /// you expired and one that never existed look identical afterwards.
     pub fn expire_share(&self, short_code: &str) -> Result<()> {
+        check_short_code(short_code)?;
         self.request("DELETE", &format!("/shares/{short_code}"), None, &[], &[])?;
         Ok(())
     }
@@ -503,6 +539,30 @@ impl CredenShare {
     }
 }
 
+/// Reject a short code that could change which endpoint the request reaches.
+///
+/// The code is interpolated into the request path. Without this, a value containing `/`, `?`
+/// or `#` escapes `/shares/` entirely and retargets an authenticated request — including at
+/// endpoints this SDK never exposes.
+fn check_short_code(code: &str) -> Result<()> {
+    if code.is_empty() || code.len() > 64 {
+        return Err(Error::InvalidArgument(format!(
+            "a short code is 1-64 characters; this one is {}",
+            code.len()
+        )));
+    }
+    if !code
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err(Error::InvalidArgument(
+            "a short code is alphanumeric with - and _; this one would change the request path"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn parse_success(response: ureq::Response) -> Result<Value> {
     let text = response
         .into_string()
@@ -510,7 +570,15 @@ fn parse_success(response: ureq::Response) -> Result<Value> {
     if text.is_empty() {
         return Ok(Value::Object(Map::new()));
     }
-    Ok(serde_json::from_str(&text).unwrap_or_else(|_| Value::Object(Map::new())))
+    // Swallowing the parse failure turned a successful create into an empty object, so the
+    // caller got Error::Internal from the missing short_code and lost the content key for a
+    // share that exists. Say what actually arrived instead.
+    serde_json::from_str(&text).map_err(|e| {
+        Error::InternalOwned(format!(
+            "the API returned a success whose body is not JSON ({e}): {}",
+            text.chars().take(200).collect::<String>()
+        ))
+    })
 }
 
 fn error_for(status: u16, response: ureq::Response) -> Error {

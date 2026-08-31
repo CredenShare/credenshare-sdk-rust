@@ -26,6 +26,10 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
+        # Same opt-in variable CI uses. Without it here, a release is the only build
+        # that never checks the fixture against the canonical copy.
+        env:
+          CREDENSHARE_VECTORS_URL: ${{ vars.CREDENSHARE_VECTORS_URL }}
       - run: cargo run --bin credenshare-conformance -- -v
 
       - name: The crypto must still compile without the client

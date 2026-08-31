@@ -32,6 +32,17 @@ impl std::fmt::Display for VerificationError {
 
 impl std::error::Error for VerificationError {}
 
+impl From<VerificationError> for crate::Error {
+    /// So a handler can `verify(..)?` and then do API work in the same function.
+    ///
+    /// Without this the two error types cannot share a signature, and every handler either
+    /// duplicates the mapping or reaches for a boxed error - in the one place where being
+    /// precise about why a delivery was rejected matters most.
+    fn from(error: VerificationError) -> Self {
+        crate::Error::WebhookVerification(error.0)
+    }
+}
+
 /// Tuning for [`verify`]. `Options::default()` uses the standard tolerance and the real clock.
 #[derive(Debug, Clone)]
 pub struct Options {

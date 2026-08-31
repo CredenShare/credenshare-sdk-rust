@@ -88,6 +88,19 @@ pub enum Error {
     /// The request never reached the API.
     Transport(String),
 
+    /// The caller passed something this client refuses to send.
+    ///
+    /// Distinct from [`Error::Internal`], which means a bug in this crate. Reporting bad
+    /// caller input as an internal error sends the reader looking for a fault in the SDK.
+    InvalidArgument(String),
+
+    /// A webhook delivery did not verify.
+    ///
+    /// Present so `?` can carry a [`crate::webhooks::VerificationError`] across a function
+    /// that returns [`Result`] - a handler usually verifies and then does API work, and
+    /// without this the two error types cannot share a signature.
+    WebhookVerification(String),
+
     /// A programming error in this crate or its caller, not a wire condition.
     Internal(&'static str),
 
@@ -182,6 +195,10 @@ impl fmt::Display for Error {
             }
             Error::Api(d) => write!(f, "{d}"),
             Error::Transport(why) => write!(f, "the request never reached the API: {why}"),
+            Error::InvalidArgument(why) => write!(f, "{why}"),
+            Error::WebhookVerification(why) => {
+                write!(f, "the webhook delivery did not verify: {why}")
+            }
             Error::Internal(why) => write!(f, "{why}"),
             Error::InternalOwned(why) => write!(f, "{why}"),
         }

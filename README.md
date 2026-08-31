@@ -12,22 +12,22 @@ credenshare = "0.1"
 ```rust,no_run
 use credenshare::{CredenShare, CreateParams, Field};
 
-# fn main() -> Result<(), credenshare::Error> {
-let client = CredenShare::new(&std::env::var("CREDENSHARE_KEY").unwrap())?;
+fn main() -> Result<(), credenshare::Error> {
+    let client = CredenShare::new(&std::env::var("CREDENSHARE_KEY").unwrap())?;
 
-let share = client.create_share(CreateParams {
-    title: "Staging deploy credentials".into(),
-    fields: vec![
-        Field::new("Username", "deploy-bot", "text"),
-        Field::new("Password", "correct horse", "password"),
-    ],
-    ..Default::default()
-})?;
+    let share = client.create_share(CreateParams {
+        title: "Staging deploy credentials".into(),
+        fields: vec![
+            Field::new("Username", "deploy-bot", "text"),
+            Field::new("Password", "correct horse", "password"),
+        ],
+        ..Default::default()
+    })?;
 
-println!("{}", share.link);
-// https://crs.sh/aB3dEf12#1xK9...
-# Ok(())
-# }
+    println!("{}", share.link);
+    // https://crs.sh/aB3dEf12#1xK9...
+    Ok(())
+}
 ```
 
 **That link is the secret.** The key lives in its fragment, which browsers never transmit.
@@ -63,17 +63,17 @@ blank, nothing erroring anywhere — which is what `validate_fields` refuses.
 ## A passcode
 
 ```rust,no_run
-# use credenshare::{CredenShare, CreateParams, Field};
-# fn main() -> Result<(), credenshare::Error> {
-# let client = CredenShare::new("crs_sk_live_a.b")?;
-client.create_share(CreateParams {
-    title: "Production database".into(),
-    fields: vec![Field::new("Password", "s3cr3t", "password")],
-    passcode: Some("hunter2".into()),
-    ..Default::default()
-})?;
-# Ok(())
-# }
+use credenshare::{CredenShare, CreateParams, Field};
+fn main() -> Result<(), credenshare::Error> {
+    let client = CredenShare::new("crs_sk_live_a.b")?;
+    client.create_share(CreateParams {
+        title: "Production database".into(),
+        fields: vec![Field::new("Password", "s3cr3t", "password")],
+        passcode: Some("hunter2".into()),
+        ..Default::default()
+    })?;
+    Ok(())
+}
 ```
 
 The passcode is mixed into the key derivation and never sent. The server receives only a
@@ -83,20 +83,20 @@ link and the passcode over different channels — that is the point of having bo
 ## Listing and expiring
 
 ```rust,no_run
-# use credenshare::CredenShare;
-# fn main() -> Result<(), credenshare::Error> {
-# let client = CredenShare::new("crs_sk_live_a.b")?;
-let page = client.list_shares(50, 1)?;
-println!("{:?} {}", page.total, page.has_more());
+use credenshare::CredenShare;
+fn main() -> Result<(), credenshare::Error> {
+    let client = CredenShare::new("crs_sk_live_a.b")?;
+    let page = client.list_shares(50, 1)?;
+    println!("{:?} {}", page.total, page.has_more());
 
-client.for_each_share(100, |share| {
-    println!("{} {:?}", share.short_code, share.expired_at);
+    client.for_each_share(100, |share| {
+        println!("{} {:?}", share.short_code, share.expired_at);
+        Ok(())
+    })?;
+
+    client.expire_share("aB3dEf12")?;
     Ok(())
-})?;
-
-client.expire_share("aB3dEf12")?;
-# Ok(())
-# }
+}
 ```
 
 `list_shares` and `get_share` return **metadata only** — never content, never a key. A short
@@ -133,7 +133,7 @@ client cannot tell.
 use credenshare::webhooks::{verify, Options, SIGNATURE_HEADER};
 
 fn handle(raw_body: &[u8], signature: &str, secret: &str) -> bool {
-    verify(raw_body, signature, &[secret], &Options::default()).is_ok()
+        verify(raw_body, signature, &[secret], &Options::default()).is_ok()
 }
 ```
 
@@ -147,10 +147,10 @@ appears broken.
 signatures so you can roll your configuration without dropping anything:
 
 ```rust,no_run
-# use credenshare::webhooks::{verify, Options};
-# fn f(body: &[u8], header: &str, new_secret: &str, old_secret: &str) {
-verify(body, header, &[new_secret, old_secret], &Options::default()).unwrap();
-# }
+use credenshare::webhooks::{verify, Options};
+fn f(body: &[u8], header: &str, new_secret: &str, old_secret: &str) {
+    verify(body, header, &[new_secret, old_secret], &Options::default()).unwrap();
+}
 ```
 
 `verify` returns `Result<(), VerificationError>` — no `bool`. `Result<bool>` invites a caller to

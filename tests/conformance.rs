@@ -173,16 +173,81 @@ fn the_iv_is_never_reused_under_the_same_key() {
 
 #[test]
 fn unknown_members_are_preserved_so_a_newer_sender_does_not_break_an_older_reader() {
-    // The Field struct is closed, so a newer member would be dropped on the way through this
-    // client. That is a real limit worth stating rather than discovering: this test pins the
-    // CURRENT behaviour so a future change to it is deliberate.
+    // This test used to assert the opposite of its own name: it pinned the closed struct,
+    // where a member a newer sender added was dropped on decrypt and gone on re-encrypt.
+    // Field now carries an overflow map, so the name and the body agree.
+    let wire = r#"[{"key":"k","value":"v","type":"text","masked":true,"order":3}]"#;
+    let fields: Vec<Field> = serde_json::from_str(wire).unwrap();
+
+    assert_eq!(fields[0].key, "k");
+    assert_eq!(fields[0].extra.len(), 2, "unknown members were dropped");
+
+    let round_tripped = serde_json::to_string(&fields).unwrap();
+    assert!(
+        round_tripped.contains(r#""masked":true"#),
+        "{round_tripped}"
+    );
+    assert!(round_tripped.contains(r#""order":3"#), "{round_tripped}");
+
+    // And through a real encrypt/decrypt cycle, which is where the loss actually happened.
     let key = credenshare::new_content_key();
-    let fields = vec![Field::new("k", "v", "text")];
     let blob = credenshare::encrypt_content(&key, &fields, None).unwrap();
     assert_eq!(
         credenshare::decrypt_content(&key, &blob, None).unwrap(),
         fields
     );
+}
+
+#[test]
+fn the_three_known_members_still_lead_in_declaration_order() {
+    // The wire form is key, value, type. A field with an extra member that sorts before all
+    // three must not reorder them - which is exactly what a naive map-based encoder does.
+    let wire = r#"[{"key":"k","value":"v","type":"text","aaa":1}]"#;
+    let fields: Vec<Field> = serde_json::from_str(wire).unwrap();
+    assert_eq!(
+        serde_json::to_string(&fields).unwrap(),
+        r#"[{"key":"k","value":"v","type":"text","aaa":1}]"#
+    );
+}
+
+#[test]
+fn a_field_with_no_extras_serialises_exactly_as_before() {
+    // If this changes, every conformance vector changes with it.
+    assert_eq!(
+        serde_json::to_string(&Field::new("Password", "s3cr3t", "password")).unwrap(),
+        r#"{"key":"Password","value":"s3cr3t","type":"password"}"#
+    );
+}
+
+#[test]
+fn a_short_code_cannot_change_which_endpoint_is_called() {
+    // The code is interpolated into the request path, so one containing / ? or # retargets
+    // an authenticated request - including at endpoints this SDK never exposes.
+    let client = credenshare::CredenShare::new("crs_sk_live_abc123.authsecretvalue").unwrap();
+
+    for hostile in [
+        "../../v1/api-keys",
+        "x?admin=1",
+        "x#frag",
+        "",
+        &"a".repeat(65),
+    ] {
+        assert!(
+            client.get_share(hostile).is_err(),
+            "get_share accepted {hostile:?}"
+        );
+        assert!(
+            client.expire_share(hostile).is_err(),
+            "expire_share accepted {hostile:?}"
+        );
+    }
+}
+
+#[test]
+fn a_credential_with_no_key_id_is_refused() {
+    // Both parts are non-empty, so the part count check passes - and the key id is still "".
+    assert!(credenshare::Credential::parse("crs_sk_live_.authsecret").is_err());
+    assert!(credenshare::Credential::parse("crs_sk_live_abc.authsecret").is_ok());
 }
 
 #[test]
@@ -239,11 +304,11 @@ fn a_seed_keypair_debug_withholds_the_private_half() {
     let pair = credenshare::keypair_from_seed(&[7u8; 32]).unwrap();
     let rendered = format!("{pair:?}");
     assert!(
-        !rendered.contains(&format!("{:?}", pair.scalar)),
+        !rendered.contains(&format!("{:?}", pair.private_scalar())),
         "{rendered}"
     );
     assert!(
-        !rendered.contains(&format!("{:?}", pair.seed)),
+        !rendered.contains(&format!("{:?}", pair.seed())),
         "{rendered}"
     );
     assert!(rendered.contains(&pair.public_key_b64url()), "{rendered}");
