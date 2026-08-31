@@ -27,7 +27,7 @@ pub use errors::{ApiDetails, Error, Result};
 #[cfg(feature = "client")]
 pub use client::{
     ClientOptions, CreateParams, CredenShare, Credential, Share, SharePage, ShareSummary,
-    DEFAULT_BASE_URL, DEFAULT_LINK_ORIGIN, DEFAULT_MAX_RETRIES,
+    DEFAULT_BASE_URL, DEFAULT_LINK_ORIGIN, DEFAULT_MAX_RETRIES, MAX_PAGES,
 };
 
 /// The version of this crate.

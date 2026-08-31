@@ -55,10 +55,6 @@ pub const FIELD_TYPES: [&str; 6] = [
 // `Default` is derived so that adding `extra` did not break every external struct literal:
 // `Field { key, value, field_type, ..Default::default() }` compiles.
 //
-// `Eq` is deliberately absent. `extra` holds `serde_json::Value`, which is only `PartialEq`
-// because it can carry floats. That is a source break for anything with an `Eq` bound or a
-// `HashSet<Field>` - recorded in CHANGELOG.md, and the reason is that the alternative was to
-// keep dropping a newer sender's members on every decrypt/re-encrypt round trip, silently.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Field {
     pub key: String,
@@ -76,6 +72,19 @@ pub struct Field {
     #[serde(flatten, default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
 }
+
+// `Eq` is implemented by hand rather than derived, because `serde_json::Value` is only
+// `PartialEq` - it can hold an f64, and floats are not reflexive.
+//
+// Sound here: JSON has no NaN and no infinity. `serde_json::Number` cannot represent either
+// (without the `arbitrary_precision` feature, which is not enabled), so every `Value` this
+// struct can hold compares equal to itself. Restoring `Eq` keeps `f1 == f2` and any `Eq`
+// bound working for consumers.
+//
+// `Hash` genuinely cannot follow - `Value` does not implement it - so `HashSet<Field>` and
+// `HashMap<Field, _>` remain unavailable. Key on `Field::key`, or on a
+// `(&str, &str, &str)` tuple of the three known members, and keep the `Field` as the value.
+impl Eq for Field {}
 
 impl Field {
     /// A field, with all three members. Ordering matters: the serialised form is compared

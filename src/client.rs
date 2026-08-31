@@ -29,10 +29,6 @@ const QUOTA_EXCEEDED_CODE: i64 = 61;
 /// The API's numeric code for an Idempotency-Key replayed with a different body.
 const IDEMPOTENCY_CONFLICT_CODE: i64 = 105;
 
-/// Retries for network failures. Only transport errors are retried, never an HTTP status: a
-/// 5xx may have committed, and this client cannot tell. A create is safe to retry because the
-/// Idempotency-Key and the body are both identical on the second attempt — which is the entire
-/// reason the header is mandatory.
 /// The most pages [`CredenShare::for_each_share`] will walk before giving up.
 ///
 /// A bound exists because the end of the result set is not always knowable: a server that
@@ -43,6 +39,10 @@ const IDEMPOTENCY_CONFLICT_CODE: i64 = 105;
 /// At the default page size of 100 this is ten million shares.
 pub const MAX_PAGES: u32 = 100_000;
 
+/// Retries for network failures. Only transport errors are retried, never an HTTP status: a
+/// 5xx may have committed, and this client cannot tell. A create is safe to retry because the
+/// Idempotency-Key and the body are both identical on the second attempt — which is the entire
+/// reason the header is mandatory.
 pub const DEFAULT_MAX_RETRIES: u32 = 2;
 
 const CREDENTIAL_PREFIX: &str = "crs_sk_live_";
@@ -433,6 +433,17 @@ impl CredenShare {
     /// Written here because the hand-rolled version is usually wrong in the same way: it stops
     /// on the first page shorter than `limit`, which is a page the server is entitled to return
     /// in the middle of a result set.
+    /// # Errors
+    ///
+    /// Beyond anything [`Self::list_shares`] can return, the walk itself refuses two things
+    /// rather than looping:
+    ///
+    /// - the API echoing a page number other than the one requested, which makes progress
+    ///   unobservable;
+    /// - reaching [`MAX_PAGES`] without the API ever signalling the end of the result set.
+    ///
+    /// Both are [`Error::Internal`] / [`Error::InternalOwned`] and both are preferable to the
+    /// alternative, which is a process that never returns.
     pub fn for_each_share<F>(&self, limit: u32, mut visit: F) -> Result<()>
     where
         F: FnMut(&ShareSummary) -> Result<()>,

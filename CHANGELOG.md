@@ -1,22 +1,28 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## 0.1.0 — released 2026-08-30
 
 First release.
 
-### Breaking, before the first release
+### Breaking, before v0.1.0
 
-Nothing is published, so nothing is pinned to a version — but this repository is public with
-no tags, so pinning to a **commit** is the only thing a consumer can do, and both of these
-stop such a consumer's code from compiling.
+These landed before `v0.1.0` was tagged, so no released version ever had the old shape.
+Recorded because the repository is public and someone may have pinned to a commit from the
+window before the tag existed.
 
-- **`Field` gained a fourth public member and lost `Eq`.** `extra: Map<String, Value>`
-  preserves members this version does not know about, so a field written by a newer sender
-  survives a decrypt/re-encrypt round trip instead of being silently deleted. Consequences:
-  an exhaustive struct literal no longer compiles — use
-  `Field { key, value, field_type, ..Default::default() }`, which `Default` is now derived
-  for — and `Eq` is gone, because `serde_json::Value` is only `PartialEq` (it can carry
-  floats). Anything with an `Eq` bound or a `HashSet<Field>` needs `PartialEq` instead.
+- **`Field` gained a fourth public member.** `extra: Map<String, Value>` preserves members
+  this version does not know about, so a field written by a newer sender survives a
+  decrypt/re-encrypt round trip instead of being silently deleted. An exhaustive struct
+  literal therefore no longer compiles — use
+  `Field { key, value, field_type, ..Default::default() }`, which `Default` is now derived for.
+
+  **`Eq` is retained.** It is implemented by hand rather than derived, because
+  `serde_json::Value` is only `PartialEq`. That is sound here: JSON has no NaN or infinity, so
+  every value this struct can hold is reflexive. `f1 == f2` and any `Eq` bound keep working.
+
+  **`Hash` is not available**, because `Value` does not implement it, so `HashSet<Field>` and
+  `HashMap<Field, _>` do not compile. Key on `Field::key`, or on a `(&str, &str, &str)` tuple
+  of the three known members, and keep the `Field` as the value.
 - **`SeedKeypair::seed` and `::scalar` are no longer public fields.** They are the private
   key, on a struct whose hand-written `Debug` deliberately withholds them — leaving them
   public made that gesture decorative. Use `seed()` and `private_scalar()`.

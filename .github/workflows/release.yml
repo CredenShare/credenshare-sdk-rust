@@ -25,13 +25,17 @@ jobs:
 
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
+      # The env belongs on THIS step. The fixture-drift comparison is an integration test
+      # in tests/conformance.rs, which --all-targets runs and --doc never does. Inserting
+      # the doctest step above the env block moved the variable onto the doctest step, so
+      # the release build could not check drift even with the variable set - the exact
+      # failure the comment claimed it prevented.
       - run: cargo test --all-targets
-      # --all-targets excludes doctests; the README examples are doctests.
-      - run: cargo test --doc
-        # Same opt-in variable CI uses. Without it here, a release is the only build
-        # that never checks the fixture against the canonical copy.
         env:
           CREDENSHARE_VECTORS_URL: ${{ vars.CREDENSHARE_VECTORS_URL }}
+      # --all-targets excludes doctests; the README examples are doctests. No env: no
+      # doctest reads the vectors URL.
+      - run: cargo test --doc
       - run: cargo run --bin credenshare-conformance -- -v
 
       - name: The crypto must still compile without the client

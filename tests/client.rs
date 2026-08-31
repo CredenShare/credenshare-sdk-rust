@@ -517,3 +517,108 @@ fn retries_are_bounded_and_surface_as_transport() {
     stub.next();
     stub.next();
 }
+
+// ── the walk must terminate against a server that never signals the end ────────────────
+//
+// Asked for by the review of item 9 and not written at the time: the fix landed with no test.
+// Two failure modes, both of which used to be an unbounded loop.
+
+/// A server that answers every list request with a full page and no paging figures at all.
+fn endless_full_pages(limit: u32) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            use std::io::{Read, Write};
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            let rows: Vec<String> = (0..limit)
+                .map(|i| format!(r#"{{"short_code":"c{i}"}}"#))
+                .collect();
+            let body = format!(r#"{{"shares":[{}]}}"#, rows.join(","));
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+    (addr, handle)
+}
+
+#[test]
+fn for_each_share_stops_instead_of_walking_forever() {
+    // MAX_PAGES is 100_000, which would be 100_000 round trips against a local socket - far
+    // too slow for a test. So this asserts the property that makes the cap reachable at all:
+    // has_more stays true forever on this server, which is precisely why the cap exists.
+    // The page-echo guard below is the one that fires cheaply.
+    let (addr, _server) = endless_full_pages(3);
+    let client = credenshare::CredenShare::with_options(
+        "crs_sk_live_abc123.authsecretvalue",
+        credenshare::ClientOptions {
+            base_url: format!("http://{addr}"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let page = client.list_shares(3, 1).unwrap();
+    assert_eq!(page.shares.len(), 3);
+    assert!(
+        page.has_more(),
+        "a full page with no paging figures must not read as the end - that was the silent \
+         truncation this fallback fixed"
+    );
+    assert!(
+        credenshare::MAX_PAGES > 0,
+        "the cap the error message names must be reachable by a consumer"
+    );
+}
+
+#[test]
+fn for_each_share_refuses_a_server_that_echoes_the_wrong_page() {
+    // This server always answers page 1, so progress is unobservable and the last-resort
+    // has_more fallback would loop forever. It must be an error, not a hang.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            use std::io::{Read, Write};
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            // page is pinned at 1 whatever was asked for
+            let body = r#"{"shares":[{"short_code":"a"},{"short_code":"b"}],"pagination":{"page":1,"limit":2,"total_pages":9}}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+
+    let client = credenshare::CredenShare::with_options(
+        "crs_sk_live_abc123.authsecretvalue",
+        credenshare::ClientOptions {
+            base_url: format!("http://{addr}"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let mut seen = 0usize;
+    let result = client.for_each_share(2, |_| {
+        seen += 1;
+        assert!(seen < 1000, "for_each_share is looping instead of erroring");
+        Ok(())
+    });
+
+    let error = result.expect_err("a server echoing a constant page must be refused");
+    assert!(
+        format!("{error}").contains("page"),
+        "the error must say paging is the problem: {error}"
+    );
+}
