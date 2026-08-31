@@ -97,33 +97,51 @@ the first publish claims it.
    not obviously say so.
 3. No secret is added to GitHub. That is the point of this mechanism.
 
-### npm — an org, then Trusted Publishing
+### npm — an org, one bootstrap publish, then Trusted Publishing
 
-`@credenshare/sdk` is a *scoped* package, so the scope has to exist and be yours.
+`@credenshare/sdk` is a *scoped* package, so the scope has to exist and be yours. And unlike
+PyPI, **npm cannot configure a trusted publisher for a package that does not exist yet** — the
+settings page you configure it on is the *package's* settings page. There is an open CLI issue
+for this (npm/cli#8544); until it lands, the first version of any new package must be published
+with a token. This is not a choice we made; it is the order npm imposes.
 
-1. Create an account at **npmjs.com** and enable 2FA.
-2. Create the organisation **`credenshare`** (npmjs.com → your avatar → *Add an
-   Organization*). Free for public packages. This is what makes the `@credenshare` scope yours.
-3. **Configure Trusted Publishing**, which is what npm itself recommends. On the package's npm
-   settings page, point it at this repository, workflow `release.yml`, environment `npm`. No
-   secret is stored anywhere, and provenance is attested by the registry.
+So the sequence is three steps, and the token exists only for step 2.
 
-**Do not tick "Bypass two-factor authentication (2FA)" on a token.** npm's own warning next to
-that checkbox says to use Trusted Publishing for CI instead, and it is right: a token that
-bypasses 2FA is a long-lived credential with publish rights and no second factor.
+**1. Create the organisation.** npmjs.com → your avatar → *Add an Organization* → `credenshare`.
+Free for public packages. This is what makes the `@credenshare` scope yours, and the scope will
+not appear in a token's permission list until it exists.
 
-**One version requirement, and it fails confusingly if missed.** npm's OIDC exchange needs
-**npm ≥ 11.5.1**. Node 22 bundles npm 10.9.8, so a workflow pinned to Node 22 cannot do trusted
-publishing at all — and the failure reads as a credentials problem rather than a version one.
-The publish job therefore runs `npm install -g npm@^11.5.1` before publishing, and prints
-`npm --version` so the log says which CLI actually did it. The test matrix deliberately stays
-on what Node ships, because that is what consumers run.
+**2. One bootstrap publish, with a granular token.** Access Tokens → *Generate New Token* →
+**Granular Access Token**, *Read and write* on **Packages and scopes → `@credenshare/*`**, and
+the shortest expiry offered.
 
-**`NPM_TOKEN` remains supported as a bootstrap only.** If npm will not attach a publisher to a
-package that does not exist yet, a granular token (Access Tokens → *Granular Access Token*,
-*Read and write* on **Packages and scopes → `@credenshare/*`**) gets the first version out.
-Add it to the `npm` environment, publish once, configure the publisher, then **delete the
-secret** — the workflow falls back to OIDC with no other change.
+If your account requires 2FA for writes, this token needs **Bypass two-factor authentication**
+ticked, and npm will warn you about it. The warning is right in general and unavoidable here:
+that is the whole reason step 3 exists. Mitigate it by scoping the token narrowly, expiring it
+soon, and deleting it the moment step 3 is done — not by leaving it in place.
+
+Add it as the secret **`NPM_TOKEN`** in the `npm` environment, set `PUBLISH_TO_REGISTRY=true`,
+and tag. The workflow uses the token when that secret is present.
+
+**3. Configure Trusted Publishing, then delete the token.** With the package now existing:
+npmjs.com → the package → **Settings → Trusted Publisher → GitHub Actions**, and fill in:
+
+| Field | Value |
+| ----- | ----- |
+| Organization or user | `CredenShare` |
+| Repository | `credenshare-sdk-node` |
+| Workflow filename | `release.yml` — filename only, with the extension, not a path |
+| Environment name | `npm` |
+| Allowed actions | **`npm publish`** (required field) |
+
+Then **delete the `NPM_TOKEN` secret**. The workflow falls back to OIDC with no other change,
+and nothing long-lived remains. Optionally tighten the package to *Require two-factor
+authentication and disallow tokens*, which is only safe to do after trusted publishing works.
+
+**Two version floors, and missing either fails as a credentials error.** npm's OIDC exchange
+needs **npm ≥ 11.5.1 and Node ≥ 22.14.0**. Node 22 bundles npm 10.9.8, so the publish job
+installs `npm@^11.5.1` and prints `npm --version` — otherwise the CLI doing the publish cannot
+perform the exchange at all, and the failure looks like a bad publisher configuration.
 
 ### crates.io — a token, because there is no alternative
 
