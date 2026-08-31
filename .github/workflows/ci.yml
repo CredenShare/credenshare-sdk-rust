@@ -9,6 +9,10 @@ on:
   # and nobody would push anything for CI to notice.
   schedule:
     - cron: "35 6 * * 1"
+  # GitHub disables a scheduled workflow after 60 days without repository activity, and a
+  # drift check that has quietly stopped running looks exactly like one that keeps passing.
+  # This is the way to run it on demand, and to confirm it still can.
+  workflow_dispatch:
 
 permissions:
   contents: read

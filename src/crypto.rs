@@ -31,6 +31,7 @@ use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::Sha256;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::errors::{Error, Result};
 
@@ -104,8 +105,16 @@ pub(crate) const WRAP_VERSION: u8 = 1;
 /// and a 32-zero-byte one both pad to the same 64-byte block — but the specification calls it
 /// out because an implementation that pads to some *other* length silently produces different
 /// output and fails conformance.
-pub(crate) fn hkdf(ikm: &[u8], salt: &[u8], info: &str, length: usize) -> Result<Vec<u8>> {
-    let mut out = vec![0u8; length];
+pub(crate) fn hkdf(
+    ikm: &[u8],
+    salt: &[u8],
+    info: &str,
+    length: usize,
+) -> Result<Zeroizing<Vec<u8>>> {
+    // Zeroizing, because every caller of this is deriving key material. Returning a plain Vec
+    // leaves the derived key in freed heap after the cipher is built, where it stays until
+    // something happens to reuse the allocation.
+    let mut out = Zeroizing::new(vec![0u8; length]);
     Hkdf::<Sha256>::new(Some(salt), ikm)
         .expand(info.as_bytes(), &mut out)
         .map_err(|_| Error::Internal("hkdf: invalid output length"))?;
@@ -347,6 +356,18 @@ pub struct SeedKeypair {
     pub(crate) scalar: [u8; KEY_LEN],
     pub(crate) secret: SecretKey,
     pub public_key_raw: [u8; PUBKEY_LEN],
+}
+
+impl Drop for SeedKeypair {
+    /// Wipe the private halves.
+    ///
+    /// `secret` is a p256 `SecretKey`, which zeroizes itself on drop. The two byte arrays are
+    /// ours, and without this they stay legible in freed memory after the keypair goes out of
+    /// scope - which for a seed is the whole private key.
+    fn drop(&mut self) {
+        self.seed.zeroize();
+        self.scalar.zeroize();
+    }
 }
 
 impl SeedKeypair {
