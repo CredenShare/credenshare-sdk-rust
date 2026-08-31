@@ -61,6 +61,9 @@ jobs:
             || { echo "::error::the conformance vectors are not in the packaged crate"; exit 1; }
 
   publish:
+    permissions:
+      # gh release create needs this
+      contents: write
     needs: verify
     runs-on: ubuntu-latest
     environment:
@@ -75,6 +78,7 @@ jobs:
       # equivalent to PyPI's or npm's yet, so this is the one release path in the four that
       # still needs a long-lived credential. Scope it to publish-update on this crate only.
       - name: Publish
+        if: vars.PUBLISH_TO_REGISTRY == 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
@@ -83,3 +87,34 @@ jobs:
             exit 1
           fi
           cargo publish
+
+      - name: Registry publication is not switched on
+        if: vars.PUBLISH_TO_REGISTRY != 'true'
+        run: |
+          echo "::notice title=Not published to the registry::This release was verified and \
+          tagged, but PUBLISH_TO_REGISTRY is not 'true' so nothing was uploaded. Configure the \
+          registry credential for this repository, then set the repository variable \
+          PUBLISH_TO_REGISTRY=true. See VERSIONING.md."
+
+      # A GitHub Release is the durable, registry-independent artifact: it exists whether or
+      # not PUBLISH_TO_REGISTRY is on, so a tag always produces something a consumer can
+      # point at and something this repository can be verified against later.
+      - name: Publish the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME"             --title "$GITHUB_REF_NAME"             --notes "Install:
+
+          \`\`\`
+          credenshare = { git = "https://github.com/CredenShare/credenshare-sdk-rust", tag = "$GITHUB_REF_NAME" }
+          \`\`\`
+
+          Verify the install against the wire specification:
+
+          \`\`\`
+          cargo run --bin credenshare-conformance
+          \`\`\`
+
+          See CHANGELOG.md for what changed.
+
+          Not on crates.io yet - see VERSIONING.md."

@@ -42,7 +42,24 @@ Reverse any two of those and you produce links that clients in the wild cannot o
 that is not lost, but is unreadable by the person you sent it to, which is the same thing to
 them.
 
-## Before the FIRST release: what must exist
+## Tagging is safe before the registries are configured
+
+A tag always does the verifiable half: it checks the tag against the manifest, runs the full
+test and conformance suite, and creates a **GitHub Release**. That half needs no credentials
+and works today.
+
+Uploading to a registry is gated on the repository variable **`PUBLISH_TO_REGISTRY`**. Until
+it is `true`, the publish step is skipped with a notice saying so, and the run is green rather
+than red — because a release path that fails by default is one everybody learns to ignore.
+
+Switching publication on is therefore two steps, in this order:
+
+1. Configure the registry credential for that repo (below).
+2. Set `PUBLISH_TO_REGISTRY=true` on the repository.
+
+The next tag publishes. Nothing else changes.
+
+## Before the FIRST registry upload: what must exist
 
 Nothing has been released yet — all four sit at `0.1.0` with **zero tags**. Tagging before the
 items below exist produces a red release run, and for Go a tag that cannot be withdrawn.
