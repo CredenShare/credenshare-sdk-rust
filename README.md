@@ -6,10 +6,13 @@ system rather than a promise.
 
 ```toml
 [dependencies]
-credenshare = { git = "https://github.com/CredenShare/credenshare-sdk-rust" }
+credenshare = { git = "https://github.com/CredenShare/credenshare-sdk-rust", tag = "v0.1.0" }
 ```
 > Not on crates.io yet. The command above installs from source, which is a
 > supported way to use this SDK - the conformance self-check runs the same either way.
+
+> Pinned to a release tag on purpose: an unpinned git install tracks the default branch,
+> which is not a release. Bump the tag when you upgrade - see [`VERSIONING.md`](VERSIONING.md).
 
 
 ```rust,no_run
@@ -45,7 +48,7 @@ encrypts correctly is the wrong place to be clever.
 The `client` feature is on by default. Turn it off to compile only the crypto:
 
 ```toml
-credenshare = { git = "https://github.com/CredenShare/credenshare-sdk-rust", default-features = false }
+credenshare = { git = "https://github.com/CredenShare/credenshare-sdk-rust", tag = "v0.1.0", default-features = false }
 ```
 
 A caller that posts with its own HTTP client, or runs somewhere a TLS stack would be dead
