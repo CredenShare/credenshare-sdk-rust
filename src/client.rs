@@ -180,7 +180,7 @@ impl SharePage {
     /// Whether another page exists.
     ///
     /// Falls back deliberately rather than answering `false` when the server omits the paging
-    /// figures: reporting "no more" on a full page is what makes [`Client::for_each_share`]
+    /// figures: reporting "no more" on a full page is what makes [`CredenShare::for_each_share`]
     /// stop after page one and return a fraction of the account as though it were all of it.
     pub fn has_more(&self) -> bool {
         if let Some(total_pages) = self.total_pages {
