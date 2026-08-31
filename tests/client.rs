@@ -571,9 +571,13 @@ fn for_each_share_stops_instead_of_walking_forever() {
         "a full page with no paging figures must not read as the end - that was the silent \
          truncation this fallback fixed"
     );
-    assert!(
-        credenshare::MAX_PAGES > 0,
-        "the cap the error message names must be reachable by a consumer"
+    // The cap the error message names must be reachable by a consumer at all - this line
+    // failing to compile is the assertion. A runtime `> 0` check is const-folded away and
+    // clippy rejects it.
+    let cap: u32 = credenshare::MAX_PAGES;
+    assert_eq!(
+        cap, 100_000,
+        "the documented cap changed; update the CHANGELOG too"
     );
 }
 
