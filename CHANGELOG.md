@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.1 — released 2026-08-30
+
+`v0.1.0` was tagged before the release-facing files were corrected, so the artifact resolved at
+that tag told consumers to install unpinned and its changelog denied its own release. This
+version contains those corrections. Nothing about the cryptography or the wire format changed
+between the two; the conformance fixture is byte-identical.
+
+### Changed
+
+- **`Eq` is restored on `Field`.** 0.1.0 dropped it, and the reason given was wrong:
+  `serde_json::Value` is only `PartialEq` because it can hold a float, but JSON has no NaN or
+  infinity, so every value this struct can hold is reflexive. A hand-written `impl Eq` is
+  sound, and `f1 == f2` works again. `Hash` still cannot follow, so `HashSet<Field>` remains
+  unavailable — key on a `(&str, &str, &str)` tuple of the three known members.
+- **`MAX_PAGES` is exported**, so the constant its own error message names can be read.
+
+### Fixed
+
+- **The release build can check fixture drift again.** The doctest step added in 0.1.0 was
+  inserted directly above an `env:` block, which in YAML bound to the new step; the drift
+  comparison is an integration test that `--all-targets` runs and `--doc` never does.
+- `DEFAULT_MAX_RETRIES` has its documentation back. `MAX_PAGES`'s doc comment had swallowed it.
+- `for_each_share`'s rustdoc documents both ways the walk can now fail.
+
+### Tests
+
+- The page bound landed in 0.1.0 untested. Two tests now cover it, and the page-echo one fails
+  with "looping instead of erroring" when the guard is removed.
+
 ## 0.1.0 — released 2026-08-30
 
 First release.
