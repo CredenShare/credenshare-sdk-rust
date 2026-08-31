@@ -18,7 +18,7 @@ keywords = ["credenshare", "secrets", "encryption", "e2ee", "zero-knowledge"]
 categories = ["cryptography", "api-bindings"]
 # The vectors ship inside the crate so `cargo run --bin credenshare-conformance` verifies the
 # exact artifact that was published, not a copy that happened to sit beside it.
-include = ["src/**/*", "tests/**/*", "README.md", "CRYPTO_WIRE_SPEC.md", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE"]
+include = ["src/**/*", "tests/**/*", "README.md", "CRYPTO_WIRE_SPEC.md", "VERSIONING.md", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE"]
 
 [dependencies]
 # RustCrypto, which is the ecosystem's audited implementation of exactly these primitives.

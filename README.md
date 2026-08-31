@@ -189,6 +189,11 @@ repository as [`CRYPTO_WIRE_SPEC.md`](CRYPTO_WIRE_SPEC.md). **The specification 
 normative — not this code**, and not any other implementation. Where they disagree, this
 is the bug.
 
+Versioning, and how a release is cut, is in [`VERSIONING.md`](VERSIONING.md). Worth reading
+before the first one: this SDK is not on a registry yet, and the release path needs
+per-repository settings that do not exist yet.
+
+
 The application and the four SDKs share no code, deliberately: a package the production
 application depended on would mean a compromised publish is a compromised application. The cost
 is drift, and drift here does not produce a test failure — it produces content that can never
