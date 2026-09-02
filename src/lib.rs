@@ -18,16 +18,19 @@ pub mod webhooks;
 mod client;
 
 pub use crypto::{
-    access_token, custody_keypair, decode_fragment, decrypt_content, encode_fragment,
-    encrypt_content, keypair_from_seed, new_content_key, passcode_verifier, unwrap_with_seed,
-    validate_fields, wrap_to_public_key, Field, SeedKeypair, FIELD_TYPES,
+    access_token, custody_keypair, decode_fragment, decrypt_content, decrypt_submission,
+    encode_fragment, encrypt_content, keypair_from_seed, new_content_key, new_seed,
+    passcode_verifier, unwrap_with_seed, validate_fields, wrap_to_public_key, Field, SeedKeypair,
+    FIELD_TYPES, SEED_LENGTH,
 };
 pub use errors::{ApiDetails, Error, Result};
 
 #[cfg(feature = "client")]
 pub use client::{
-    ClientOptions, CreateParams, CredenShare, Credential, Share, SharePage, ShareSummary,
-    DEFAULT_BASE_URL, DEFAULT_LINK_ORIGIN, DEFAULT_MAX_RETRIES, MAX_PAGES,
+    ClientOptions, CreateParams, CreateRequestParams, CredenShare, Credential, DailyView,
+    RequestDeletion, RequestField, RequestPage, RequestSummary, SecureRequest, Share, ShareCounts,
+    SharePage, ShareSummary, Stats, Submission, SubmissionPage, DEFAULT_BASE_URL,
+    DEFAULT_LINK_ORIGIN, DEFAULT_MAX_RETRIES, MAX_PAGES,
 };
 
 /// The version of this crate.

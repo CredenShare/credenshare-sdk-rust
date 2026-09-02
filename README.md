@@ -113,6 +113,120 @@ There is deliberately **no method to read a share over the API**. The recipient 
 protected by proof-of-work and captcha gates that bearer auth skips, so exposing it to a
 credential would be an enumeration bypass. Open the link in a browser.
 
+## Secure requests
+
+A collect link somebody fills in, whose submissions are sealed to a key you hold. **You
+generate the keypair** — this crate mints it locally, sends the public half, and hands you the
+32-byte seed.
+
+```rust,no_run
+use credenshare::{CredenShare, CreateRequestParams, RequestField};
+
+fn main() -> Result<(), credenshare::Error> {
+    let client = CredenShare::new("crs_sk_live_a.b")?;
+
+    let request = client.create_request(CreateRequestParams {
+        title: "Contractor onboarding".into(),
+        fields: vec![
+            RequestField::text("Your name"),
+            RequestField::new("Staging database password", "password"),
+        ],
+        ..Default::default()
+    })?;
+
+    println!("{}", request.collect_link);
+    // https://crs.sh/r/aB3dEf12  — no key in it. Safe to publish.
+
+    // STORE THIS. It is the only thing that can read the submissions - as are the same 32
+    // bytes in `request.access_link`, which is a link rather than a byte array and so the
+    // easier of the two to put in a secrets manager. Treat either as the secret itself.
+    let seed = *request.seed();
+
+    for submission in client.list_submissions(&request.short_code)?.submissions {
+        for field in submission.decrypt(&seed)? {
+            println!("{}: {}", field.key, field.value);
+        }
+    }
+    Ok(())
+}
+```
+
+**The seed never leaves your machine**, which is what makes a submission unreadable to
+CredenShare — and, because every submission uses its own ephemeral key, unreadable to the other
+submitters too. There is no recovery path: a request whose seed is lost goes on collecting
+submissions that nobody can ever open. Store it as you would a private key.
+
+That guarantee is enforced rather than promised. Before the create is sent, the serialized body
+and the outgoing `Idempotency-Key` are scanned for the seed in base64url, standard base64 and
+hex; finding it is `Error::RequestSeedTransmitted` and nothing is sent. So a seed that reaches
+the body through a title, a description or a prompt fails here rather than in production. For
+the same reason `CreateRequestParams` and `SecureRequest` have hand-written `Debug`
+implementations that withhold the seed — `dbg!(&params)` prints `seed: Some(<32 bytes
+withheld>)` — and `SecureRequest` withholds `access_link` alongside it, because that string
+carries the same 32 bytes. `SEED_LENGTH` is exported for checking a seed read back out of a
+secrets manager.
+
+The two links are opposites. `collect_link` has no key in it and is safe to publish; holding it
+lets somebody submit and never read. `access_link` carries the seed in a version-prefixed
+fragment (`"1" + base64url(seed)`), so it is the ability to read every submission, on any
+device, with nothing stored. `CredenShare::access_link_for` turns a stored seed back into one,
+which is the call to reach for rather than assembling the fragment by hand.
+
+`SecureRequest` zeroizes its own copy of the seed when it drops. That is its copy, not every
+copy: `[u8; 32]` is `Copy`, so whatever you took out with `*request.seed()` — and the access
+link string — is yours to look after.
+
+Pass `CreateRequestParams::seed` to derive the keypair from a seed you already hold. That is the
+custody case: `custody_keypair(secret).seed()` is reproducible on any machine holding the
+credential, so an ephemeral runner can create a request today and its replacement can read the
+submissions next week with nothing stored anywhere.
+
+Submissions come back **sealed**, and `decrypt` is a separate call for the same reason
+`decrypt_content` is: the seed is yours, and a list that decrypted silently would demand it on
+every read — including the reads that only want to know how many arrived.
+
+`list_submissions` takes no `limit` and no `page` because the endpoint has neither: it answers
+with the whole set, and `count` is the API's own figure for what it sent.
+`for_each_submission` is therefore one call and then a stop, not a walk — the share and request
+lists are the paginated ones, and both default to the API's own page size of 25.
+
+One encoding trap, which is worth knowing before you debug it: a request's `public_key` travels
+as **unpadded base64url**, and a submission's `data` comes back as **padded standard base64**.
+Two encodings, same feature. Pass `data` verbatim to `Submission::decrypt` or
+`decrypt_submission`; re-encoding it first produces a blob that will not open, and the failure
+reads as a wrong key rather than a wrong decoder.
+
+Pass `CreateRequestParams::organization_id` to create the request under a team you belong to.
+The API accepts it only where it matches the organization the credential already acts in, so it
+selects among what that credential can already reach rather than widening it. There is no
+counterpart on the share side: `CreateParams` shipped in 0.1.4 without one, and adding a member
+would stop an exhaustive struct literal from compiling — a source break a minor release does
+not get to make. Until the next major, create a share under a team through `client.request`.
+
+`delete_request` is two-step by design: the first call expires an active request, stopping new
+submissions while preserving those already received, and a second call on an expired one removes
+it. `RequestDeletion::outcome` says which happened rather than leaving you to infer it.
+
+## Usage figures
+
+```rust,no_run
+use credenshare::CredenShare;
+fn main() -> Result<(), credenshare::Error> {
+    let client = CredenShare::new("crs_sk_live_a.b")?;
+    let stats = client.get_stats()?;
+    println!("{} active, {} viewed", stats.shares.active, stats.shares.total_viewed);
+    for day in stats.daily_views {
+        println!("{} {}", day.date, day.count);
+    }
+    Ok(())
+}
+```
+
+Scoped to the team when the credential acts in one. `daily_views` is oldest-first and
+zero-filled, so a quiet day is a zero rather than a missing row. The per-member breakdown the
+dashboard shows is deliberately absent: a key scoped to read statistics should not become a way
+to enumerate colleagues.
+
 ## Idempotency and retries
 
 Every create carries an `Idempotency-Key`. It exists so a **network** retry cannot leave a
@@ -126,6 +240,29 @@ That is the header working, not failing.
 
 Only transport failures are retried. A 5xx is surfaced, because it may have committed and this
 client cannot tell.
+
+`request` is the escape hatch, for an endpoint this crate does not model:
+
+```rust,no_run
+use credenshare::CredenShare;
+fn main() -> Result<(), credenshare::Error> {
+    let client = CredenShare::new("crs_sk_live_a.b")?;
+    let body = client.request("GET", "/stats", None, &[], &[])?;
+    println!("{body}");
+    Ok(())
+}
+```
+
+It adds an `Idempotency-Key` to every `POST`, `PUT` and `PATCH` that does not already carry
+one, and never overwrites a supplied one — a caller reproducing a key across process restarts
+is doing exactly what the header is for. The generated key is computed once and reused across
+that call's own retries, because a key that changed per attempt would make every retry a fresh
+request as far as the API is concerned.
+
+Every other method gets none, `DELETE` included. The API consults the header on creates and
+does not read it on a delete, so a generated key there would be inert — and `expire_share`
+shipped in 0.1.4 sending none, which is a wire detail a minor release does not get to change.
+Supply your own on a `DELETE` and it is forwarded untouched.
 
 ---
 
@@ -225,6 +362,8 @@ Match on the variant; the variant is the remedy.
 | `RateLimited` | too many requests | wait `retry_after` seconds |
 | `ServiceUnavailable` | entitlements could not be resolved | nothing was created; retry |
 | `Transport` | the request never reached the API | already retried; check the network |
+| `InvalidArgument` | this client refused to send what it was given | fix the argument — nothing was sent |
+| `RequestSeedTransmitted` | a request seed was about to go out | nothing was sent; take the seed out of the body |
 
 ## Licence
 

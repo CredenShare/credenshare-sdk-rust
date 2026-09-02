@@ -38,6 +38,20 @@ pub enum Error {
     /// *cannot* reconstruct the custody private key — is gone the moment it reaches the wire.
     CustodySecretTransmitted,
 
+    /// A secure request's 32-byte seed was about to be transmitted.
+    ///
+    /// The mirror of [`Error::CustodySecretTransmitted`], for the other secret this crate holds
+    /// that the server must never see. A request's seed IS the ability to read its submissions:
+    /// the public half is published so submitters can seal to it, and the seed stays here,
+    /// which is what makes one submitter unable to read another's and CredenShare unable to
+    /// read any of them.
+    ///
+    /// Raised at the request boundary, by scanning the serialized body and the outgoing
+    /// `Idempotency-Key` rather than trusting the field list — so a seed that arrives through a
+    /// title, a description, or a caller-supplied idempotency key is caught too. The remedy is
+    /// never a retry: expire the request and create a new one under a new seed.
+    RequestSeedTransmitted,
+
     /// The credential is unknown, revoked or expired. Mint a new one.
     Authentication(ApiDetails),
 
@@ -167,6 +181,12 @@ impl fmt::Display for Error {
             Error::CustodySecretTransmitted => write!(
                 f,
                 "the custody secret was about to be transmitted; rotate this credential"
+            ),
+            Error::RequestSeedTransmitted => write!(
+                f,
+                "the request seed was about to be transmitted; the submissions to a request \
+                 whose seed reached the server are not zero-knowledge, so expire it and \
+                 create a new one"
             ),
             Error::Authentication(d) => write!(f, "the credential was not accepted: {d}"),
             Error::Permission(d) => write!(f, "this credential may not do that: {d}"),

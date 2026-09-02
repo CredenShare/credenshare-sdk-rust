@@ -160,6 +160,28 @@ pub fn new_content_key() -> [u8; KEY_LEN] {
     key
 }
 
+/// The length of a secure request's seed, in bytes.
+///
+/// Exported because a seed read back out of a secrets manager has to be checked before it is
+/// handed to [`keypair_from_seed`], and a caller writing `32` at that call site is writing the
+/// same figure this crate already knows. The same length as a content key and deliberately not
+/// interchangeable with one: seeding a request from a key a recipient holds would make that
+/// recipient able to read every submission.
+pub const SEED_LENGTH: usize = KEY_LEN;
+
+/// A fresh 32-byte seed from the OS CSPRNG.
+///
+/// This is the whole private key of a secure request's keypair, in 32 bytes, which is what
+/// lets one live in a URL fragment or a single secrets-manager entry rather than a keystore.
+/// Minted exactly like a content key and not interchangeable with one: seeding a request from
+/// a key you also handed to a recipient would make that recipient able to read every
+/// submission.
+pub fn new_seed() -> [u8; KEY_LEN] {
+    let mut seed = [0u8; KEY_LEN];
+    OsRng.fill_bytes(&mut seed);
+    seed
+}
+
 /// Encode a content key as a URL fragment: `"1" + base64url(key)`.
 ///
 /// Bare, with a single leading version character and no `k=` prefix. A key=value appendix reads
@@ -660,4 +682,28 @@ pub fn unwrap_with_seed(wrapped: &str, seed: &[u8]) -> Result<Vec<u8>> {
                 "could not unwrap: wrong recipient key, or the wrap was altered".into(),
             )
         })
+}
+
+/// Open a sealed secure-request submission with the seed kept when the request was created.
+///
+/// A submission is an ECDH wrap ([`unwrap_with_seed`]) whose payload is the same field array a
+/// share carries, so this is to submissions what [`decrypt_content`] is to shares: the one
+/// call that turns a blob you already hold into fields, with no network in it.
+///
+/// # The encoding that catches people
+///
+/// A request's `public_key` goes out as **unpadded base64url** and a submission's `data` comes
+/// back as **padded standard base64** — two encodings on the same feature. Pass a
+/// submission's `data` verbatim; re-encoding it as base64url first yields a wrap that will
+/// not open, and the failure looks like a wrong key rather than a wrong decoder.
+///
+/// (Deliberately not an intra-doc link to `Submission`: that type lives behind the optional
+/// `client` feature, and this module compiles without it.)
+///
+/// `data` is named for the member it takes, so `decrypt_submission(data, seed)` reads the same
+/// here as it does in the Node, Python and Go clients.
+pub fn decrypt_submission(data: &str, seed: &[u8]) -> Result<Vec<Field>> {
+    let plaintext = unwrap_with_seed(data, seed)?;
+    serde_json::from_slice(&plaintext)
+        .map_err(|_| Error::WireFormat("a decrypted submission is not a field array".into()))
 }
