@@ -1,10 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-10-25
 
 The two field types the web app gained on 2026-10-24. Nothing here changes behaviour: a field's
 type travels inside the encrypted payload, so both could already be sent; the list and the
-documentation now say they exist.
+documentation now say they exist. A minor rather than a patch because `FIELD_TYPES` changed
+type (below), and before 1.0 the minor is where a change to a public item goes.
 
 ### Added
 
