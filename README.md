@@ -60,7 +60,17 @@ with the wrong member name still lands in the same place — an empty `key`, a f
 blank, nothing erroring anywhere — which is what `validate_fields` refuses.
 
 `Field::field_type` is one of `text`, `password`, `date`, `multiline`, `markdown`,
-`source_code`, and decides how the recipient sees it.
+`source_code`, `url`, `qr`, and decides how the recipient sees it: `password` is masked
+behind a reveal, `source_code` is highlighted, `markdown` is rendered.
+
+- **`url`** is a link. Only an absolute `http://` or `https://` address becomes clickable;
+  anything else (a relative path, `javascript:`, a typo) is shown as plain text.
+- **`qr`** is text the recipient scans with a phone, such as a Wi-Fi network or an
+  `otpauth://` URI. Their browser draws the QR code when they click to show it. Keep it to
+  2,300 characters at most: the web app refuses longer, and a longer value may not draw.
+
+This SDK checks neither. A field's type travels inside the encrypted payload, where the
+server cannot read it, and the SDK only checks that a type is present.
 
 ## A passcode
 

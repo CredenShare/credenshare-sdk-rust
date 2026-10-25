@@ -35,14 +35,18 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::errors::{Error, Result};
 
-/// Field types the recipient view knows how to render (section 2.2.1).
-pub const FIELD_TYPES: [&str; 6] = [
+/// Field types the recipient view knows how to render (section 2.2.1). `url` is a link, made
+/// clickable only for an absolute http(s) address; `qr` is text drawn as a QR code, at most
+/// 2,300 characters. Neither is checked here: [`validate_fields`] only requires a type.
+pub const FIELD_TYPES: [&str; 8] = [
     "text",
     "password",
     "date",
     "multiline",
     "markdown",
     "source_code",
+    "url",
+    "qr",
 ];
 
 /// One labelled value in a share.

@@ -140,13 +140,21 @@ API-created share in a real browser and noticing the values had no names against
 |---|---|---|
 | `key` | yes | The field's visible **label**. Not an identifier — it is what the recipient reads. Blank renders as an unlabelled row. |
 | `value` | yes | The field's content. |
-| `type` | yes | One of `text`, `password`, `date`, `multiline`, `markdown`, `source_code`. Decides rendering: `password` is masked behind a reveal, `source_code` is syntax-highlighted, `markdown` is rendered. |
+| `type` | yes | One of `text`, `password`, `date`, `multiline`, `markdown`, `source_code`, `url`, `qr`. Decides rendering: `password` is masked behind a reveal, `source_code` is syntax-highlighted, `markdown` is rendered, `url` is a link and `qr` is drawn as a QR code (both below). |
 | `selectedProgrammingLanguage` | no | Language hint for `source_code`. |
 | `filename` | no | For `source_code`/`markdown`, offers the recipient a Download button using this name. |
 
 `key` is the member name for the label because that is what the field array has always used
 and the recipient view reads it directly. It is **not** `label`, `name` or `title`; those are
 silently ignored, which is precisely the failure described above.
+
+`url` and `qr` were added on 2026-10-24. A `url` value becomes a clickable link for the
+recipient only when it is an absolute `http:` or `https:` URL; anything else (a relative path,
+`javascript:`, a typo) is shown as text. A `qr` value is text the recipient scans with a phone,
+such as a Wi-Fi network or an `otpauth://` URI, and the recipient's browser draws it as a QR
+code when they click to show it. It SHOULD be at most 2,300 characters: the application's
+editor refuses longer, and a longer value may not draw. Neither rule is enforced on the wire,
+because `type` travels inside the encrypted payload, which the server cannot read.
 
 An unrecognised `type` MUST be treated as `text` rather than rejected — a newer sender must
 not be able to make an older reader fail on content it can otherwise display perfectly.

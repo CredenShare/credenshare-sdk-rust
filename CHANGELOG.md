@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+The two field types the web app gained on 2026-10-24. Nothing here changes behaviour: a field's
+type travels inside the encrypted payload, so both could already be sent; the list and the
+documentation now say they exist.
+
+### Added
+
+- **`url` and `qr` in `FIELD_TYPES`.** `url` is a link: only an absolute `http://` or `https://`
+  address becomes clickable for the recipient, and anything else is shown as plain text. `qr`
+  is text the recipient's browser draws as a QR code when they click to show it, such as a
+  Wi-Fi network or an `otpauth://` URI, at most 2,300 characters.
+- The README's field section and `CRYPTO_WIRE_SPEC.md` §2.2.1 describe both.
+
+### Changed
+
+- **`FIELD_TYPES` is `[&str; 8]`, not `[&str; 6]`.** Code that iterates it or takes it as a
+  slice is unaffected; code that spelled out the array type needs the new length.
+
+### Unchanged
+
+- `validate_fields` still checks only that a type is present. It does not check a `url` value's
+  scheme or a `qr` value's length: the web app's editor refuses those, and this SDK stays as
+  permissive as the wire format.
+
 ## 0.2.0 — 2026-09-02
 
 Secure requests: a collect link somebody fills in, whose submissions are sealed to a keypair

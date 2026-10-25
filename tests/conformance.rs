@@ -298,6 +298,31 @@ fn validate_fields_refuses_an_empty_key() {
 }
 
 #[test]
+fn field_types_match_the_app_and_only_presence_is_checked() {
+    // url and qr reached the app on 2026-10-24. The type rides inside the ciphertext, so the
+    // server never sees it and this crate does not police it: the 2,300-character QR limit is
+    // the app editor's, not a wire rule.
+    assert_eq!(
+        credenshare::FIELD_TYPES,
+        [
+            "text",
+            "password",
+            "date",
+            "multiline",
+            "markdown",
+            "source_code",
+            "url",
+            "qr"
+        ]
+    );
+    credenshare::validate_fields(&[
+        Field::new("Docs", "not a link", "url"),
+        Field::new("Wi-Fi", "x".repeat(2301), "qr"),
+    ])
+    .unwrap();
+}
+
+#[test]
 fn a_seed_keypair_debug_withholds_the_private_half() {
     // A key in a log line is a key that has to be rotated, and #[derive(Debug)] is how that
     // usually happens.
