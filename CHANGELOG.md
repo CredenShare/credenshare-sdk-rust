@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-10-26
 
 The /v1 additions of Gitea #404 (who opened a share, what a key may do, the expired lists and
 activity emails) and a local generator. Additive, with no source break: every existing method

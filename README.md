@@ -6,7 +6,7 @@ system rather than a promise.
 
 ```toml
 [dependencies]
-credenshare = "0.3"
+credenshare = "0.4"
 ```
 
 
@@ -44,7 +44,7 @@ encrypts correctly is the wrong place to be clever.
 The `client` feature is on by default. Turn it off to compile only the crypto:
 
 ```toml
-credenshare = { version = "0.3", default-features = false }
+credenshare = { version = "0.4", default-features = false }
 ```
 
 A caller that posts with its own HTTP client, or runs somewhere a TLS stack would be dead
