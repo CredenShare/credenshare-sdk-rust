@@ -92,10 +92,37 @@ The passcode is mixed into the key derivation and never sent. The server receive
 one-way verifier, so it can check an attempt without gaining the ability to decrypt. Share the
 link and the passcode over different channels — that is the point of having both.
 
+## Activity emails
+
+```rust,no_run
+use credenshare::{CredenShare, CreateParams, Field, ShareOptions};
+fn main() -> Result<(), credenshare::Error> {
+    let client = CredenShare::new("crs_sk_live_a.b")?;
+    client.create_share_with(
+        CreateParams {
+            title: "Deploy key".into(),
+            fields: vec![Field::new("Key", "s3cr3t", "password")],
+            ..Default::default()
+        },
+        ShareOptions::default().notify_on(["viewed", "denied"]),
+    )?;
+    Ok(())
+}
+```
+
+`notify_on` emails the share's creator when it is viewed, when a view is refused, when it
+expires or when it is deleted: any of `viewed`, `denied`, `expired` and `deleted`
+(`NOTIFY_ON_EVENTS`), each at most once, the same choice as the app's "Email me when". An
+unknown or repeated event is `Error::InvalidArgument` before anything is encrypted or sent.
+
+It lives on `ShareOptions` and `create_share_with` rather than on `CreateParams` because that
+struct shipped in 0.1.4, and a new field on it would stop an exhaustive struct literal from
+compiling. `ShareOptions` is `#[non_exhaustive]`, so it can grow without that.
+
 ## Listing and expiring
 
 ```rust,no_run
-use credenshare::CredenShare;
+use credenshare::{CredenShare, ListStatus};
 fn main() -> Result<(), credenshare::Error> {
     let client = CredenShare::new("crs_sk_live_a.b")?;
     let page = client.list_shares(50, 1)?;
@@ -107,9 +134,17 @@ fn main() -> Result<(), credenshare::Error> {
     })?;
 
     client.expire_share("aB3dEf12")?;
+
+    // Shares that have ended, by date, views or deletion, newest expiry first.
+    let ended = client.list_shares_by_status(ListStatus::Expired, 50, 1)?;
+    println!("{:?}", ended.total);
     Ok(())
 }
 ```
+
+`list_requests_by_status` and `for_each_request_by_status` do the same for secure requests: the
+expired list is the requests that have closed, and a deleted request is in neither.
+`list_shares` and `list_requests` read the active list and send what they always have.
 
 `list_shares` and `get_share` return **metadata only** — never content, never a key. A short
 code belonging to another account reports exactly as one that does not exist, so a credential
@@ -236,6 +271,102 @@ Scoped to the team when the credential acts in one. `daily_views` is oldest-firs
 zero-filled, so a quiet day is a zero rather than a missing row. The per-member breakdown the
 dashboard shows is deliberately absent: a key scoped to read statistics should not become a way
 to enumerate colleagues.
+
+## Who opened a share
+
+```rust,no_run
+use credenshare::{AccessLogParams, CredenShare};
+fn main() -> Result<(), credenshare::Error> {
+    let client = CredenShare::new("crs_sk_live_a.b")?;
+    let page = client.get_access_log("aB3dEf12", &AccessLogParams { limit: Some(50), ..Default::default() })?;
+    for e in &page.entries {
+        // newest first
+        println!("{} {} {} {} {}", e.accessed_at, e.accessed_ip, e.platform, e.failed_passcode, e.signed_in);
+    }
+
+    let since = AccessLogParams { from: Some("2026-10-01T00:00:00Z".into()), ..Default::default() };
+    client.for_each_access_log_entry("aB3dEf12", &since, |e| {
+        println!("{:?}", e.user_agent);
+        Ok(())
+    })?;
+    Ok(())
+}
+```
+
+The access log the app shows under Access History. It needs the `audit:read` scope, which
+`shares:read` does not include because the log carries recipients' IP addresses. Only the
+share's creator can read it, for a live share or one that has ended; any other short code is
+`Error::NotFound`.
+
+Pages are cursor-based: `for_each_access_log_entry` follows `next_cursor` to the end, and
+`get_access_log` with `cursor` reads one page further back. `from` and `to` are RFC 3339
+strings; a malformed or reversed one is refused by the API as `Error::Api` with status 400. The
+plan's retention applies whatever `from` says, and `retention_days`, `effective_from` and
+`effective_to` report the window used.
+
+Each page carries a weak `etag`. Pass it back as `if_none_match` and an unchanged page returns
+with `not_modified` set rather than as an error. The window's ends default to the current time,
+so an unchanged page is only likely when both `from` and `to` are set.
+
+`user_agent` is the raw user agent, `None` when none was recorded; link previews and scanners
+show up there. `signed_in` says whether the viewer was signed in, not who they were.
+
+## Capabilities
+
+```rust,no_run
+use credenshare::CredenShare;
+fn main() -> Result<(), credenshare::Error> {
+    let client = CredenShare::new("crs_sk_live_a.b")?;
+    let caps = client.get_capabilities(None)?;
+    println!("{} {:?} {}", caps.plan.name, caps.key.scopes, caps.limits.remaining_shares);
+    if caps.features.get("secure_requests") == Some(&true) { /* ... */ }
+    Ok(())
+}
+```
+
+What this credential may do: its scopes and rate limit, its plan (the team's for a team key),
+the plan's limits and features, and the lists the API accepts. No scope is needed. In
+`limits`, `UNLIMITED` (-1) means the plan sets none. `sharing_policy` is the team's sharing
+policy for a team key, so it can be met before creating anything, and `None` for a personal
+key. `etag` and `if_none_match` work as they do for the access log.
+
+## Generating a password, passphrase or PIN
+
+```rust
+use credenshare::{generate_passphrase, generate_password, generate_pin};
+use credenshare::{PassphraseOptions, PasswordOptions, Separator};
+fn main() -> Result<(), credenshare::Error> {
+    let password = generate_password(&PasswordOptions::default())?; // 20 characters
+    let phrase = generate_passphrase(&PassphraseOptions {
+        words: 6,
+        separator: Separator::Space,
+        ..Default::default()
+    })?;
+    let pin = generate_pin(8)?;
+    assert_eq!(phrase.strength, "Strong"); // 77.5 bits
+    let _ = (password.value(), pin.value());
+    Ok(())
+}
+```
+
+Generated on this machine, with nothing sent anywhere, and available without the `client`
+feature: the app's three modes, with the same character sets and the same strength figures.
+
+- **Password:** 8 to 128 characters (default 20) from upper and lower case, numbers and the
+  symbols ``!@#$%^&*()_+-=[]{}|;:,.<>?`"~/\'``, any set switched off with `uppercase`,
+  `lowercase`, `numbers` or `symbols: false`, and any characters left out with `exclude`.
+- **Passphrase:** 3 to 12 words (default 5) from the EFF long word list, 7,776 words, joined
+  by `Separator::Hyphen` (the default), `Space`, `Period`, `Underscore` or `None`.
+  `capitalize` upper-cases each word; `include_number` adds one digit to one word.
+- **PIN:** 4 to 12 digits; the app's default is 6.
+
+Every draw is uniform: the operating system's random source with rejection sampling, where
+reducing a random value with `%` would favour some characters. `bits` is the entropy of what
+the options generate: length times log2 of the pool for a password, words times log2(7,776) for
+a passphrase, plus log2(10) and log2(words) for the digit. `strength` is Weak below 40 bits,
+Fair below 60, Strong below 80 and Very Strong from there, as the app labels it. Out-of-range
+options are `Error::InvalidArgument` rather than being adjusted. The value is behind `value()`,
+withheld from `Debug`, and wiped from memory when the `Generated` drops.
 
 ## Idempotency and retries
 
@@ -372,7 +503,7 @@ Match on the variant; the variant is the remedy.
 | `RateLimited` | too many requests | wait `retry_after` seconds |
 | `ServiceUnavailable` | entitlements could not be resolved | nothing was created; retry |
 | `Transport` | the request never reached the API | already retried; check the network |
-| `InvalidArgument` | this client refused to send what it was given | fix the argument — nothing was sent |
+| `InvalidArgument` | this client refused to send or generate what it was given | fix the argument — nothing was sent: a `notify_on` event, an access-log limit or short code, or generator options out of range |
 | `RequestSeedTransmitted` | a request seed was about to go out | nothing was sent; take the seed out of the body |
 
 ## Licence

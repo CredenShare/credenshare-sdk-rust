@@ -4,6 +4,7 @@
 //! network it is ciphertext plus metadata, and the content key exists only in the link this
 //! client hands back to you.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::time::Duration;
 
@@ -240,6 +241,34 @@ pub struct CreateParams {
     /// Create a share under a key you already hold — a link you handed out before the create,
     /// or a fixed key in a test. It does not make the request body reproducible.
     pub content_key: Option<[u8; 32]>,
+}
+
+/// What a share can carry beyond [`CreateParams`], for [`CredenShare::create_share_with`].
+///
+/// A separate type because `CreateParams` shipped in 0.1.4, and a new field on it stops an
+/// exhaustive struct literal from compiling: a source break, which a minor release does not
+/// make. This one is `#[non_exhaustive]`, so it can grow without that happening again; build it
+/// with `ShareOptions::default()` and its methods.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct ShareOptions {
+    /// Email the share's creator when it is viewed, when a view is refused, when it expires or
+    /// when it is deleted: any of [`NOTIFY_ON_EVENTS`], each at most once. The same choice as
+    /// the app's "Email me when". Checked before anything is encrypted or sent, as the API
+    /// checks it. Empty sends nothing.
+    pub notify_on: Vec<String>,
+}
+
+impl ShareOptions {
+    /// Sets [`Self::notify_on`].
+    pub fn notify_on<I, S>(mut self, events: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.notify_on = events.into_iter().map(Into::into).collect();
+        self
+    }
 }
 
 /// One prompt on a collect form.
@@ -588,6 +617,152 @@ pub struct DailyView {
     pub count: u32,
 }
 
+/// The events [`ShareOptions::notify_on`] accepts, in the API's order.
+pub const NOTIFY_ON_EVENTS: [&str; 4] = ["viewed", "denied", "expired", "deleted"];
+
+/// What a limit reads when the plan sets none, in [`CapabilityLimits`] and
+/// [`AccessLogPage::retention_days`].
+pub const UNLIMITED: i64 = -1;
+
+/// The active or the expired half of the share and request lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListStatus {
+    /// The live list, and what [`CredenShare::list_shares`] and
+    /// [`CredenShare::list_requests`] have always read.
+    Active,
+    /// Shares that have ended, by date, by views or by deletion, newest expiry first; requests
+    /// that have closed. A deleted request is in neither list.
+    Expired,
+}
+
+impl ListStatus {
+    /// The API's name for it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ListStatus::Active => "active",
+            ListStatus::Expired => "expired",
+        }
+    }
+}
+
+/// One read of a share's access log. `AccessLogParams::default()` reads the newest page at
+/// the API's default size.
+#[derive(Debug, Clone, Default)]
+pub struct AccessLogParams {
+    /// 1 to 100. `None` leaves it to the API, which answers 50.
+    pub limit: Option<u32>,
+    /// A previous page's `next_cursor`, to read further back. Opaque.
+    pub cursor: Option<String>,
+    /// RFC 3339 bounds on the entries' times. The plan's retention still applies: nothing
+    /// older than `retention_days` comes back, whatever `from` says. Malformed or reversed
+    /// times are refused by the API as [`Error::Api`] with status 400.
+    pub from: Option<String>,
+    pub to: Option<String>,
+    /// An `etag` from an earlier page. An unchanged page comes back with `not_modified` set
+    /// rather than as an error.
+    pub if_none_match: Option<String>,
+}
+
+/// One opening of a share.
+#[derive(Debug, Clone)]
+pub struct AccessLogEntry {
+    /// RFC 3339, as the API sent it.
+    pub accessed_at: String,
+    pub accessed_ip: String,
+    pub platform: String,
+    /// The raw user agent, or `None` when none was recorded. Link previews show up here.
+    pub user_agent: Option<String>,
+    /// The viewer entered a wrong passcode.
+    pub failed_passcode: bool,
+    /// The viewer was signed in to CredenShare. Whose account it was is not disclosed.
+    pub signed_in: bool,
+}
+
+/// One page of a share's access log, newest first.
+///
+/// When `not_modified` is true the API answered 304 to `if_none_match`: the page already held
+/// is still current, and nothing here but `short_code` and `etag` is set.
+#[derive(Debug, Clone)]
+pub struct AccessLogPage {
+    pub short_code: String,
+    pub entries: Vec<AccessLogEntry>,
+    /// Reads the next, older page. `None` on the last page.
+    pub next_cursor: Option<String>,
+    /// The plan's access-log retention in days, or [`UNLIMITED`].
+    pub retention_days: i64,
+    /// The window the API applied after retention. When `from` and `to` are not set they move
+    /// with the clock, so the `etag` of an unbounded read changes from one second to the next.
+    pub effective_from: Option<String>,
+    pub effective_to: Option<String>,
+    pub etag: Option<String>,
+    pub not_modified: bool,
+}
+
+impl AccessLogPage {
+    /// Whether an older page exists.
+    pub fn has_more(&self) -> bool {
+        self.next_cursor.is_some()
+    }
+}
+
+/// The credential itself, as the API sees it.
+#[derive(Debug, Clone, Default)]
+pub struct CapabilityKey {
+    pub key_id: String,
+    pub scopes: Vec<String>,
+    pub custody_level: i64,
+    /// The team a team key acts in, or `None` for a personal key.
+    pub organization_id: Option<String>,
+    pub rate_limit_rpm: i64,
+}
+
+/// The plan behind the key: the team's for a team key, the account's otherwise.
+#[derive(Debug, Clone, Default)]
+pub struct CapabilityPlan {
+    pub code: String,
+    pub name: String,
+}
+
+/// The plan's numeric limits, any negotiated override included. [`UNLIMITED`] (-1) means the
+/// plan sets none.
+#[derive(Debug, Clone, Default)]
+pub struct CapabilityLimits {
+    pub max_shares: i64,
+    pub remaining_shares: i64,
+    pub max_fields: i64,
+    pub max_days_access_logs: i64,
+    pub max_api_keys: i64,
+    pub max_webhooks: i64,
+}
+
+/// What a credential may do.
+///
+/// When `not_modified` is true the API answered 304 to `if_none_match`, and nothing but `etag`
+/// is set.
+#[derive(Debug, Clone, Default)]
+pub struct Capabilities {
+    pub api_version: String,
+    pub key: CapabilityKey,
+    pub plan: CapabilityPlan,
+    pub limits: CapabilityLimits,
+    /// The plan's switches by the API's own names, such as `secure_requests`. A map rather than
+    /// fields, so a feature the API adds later is readable without a new release.
+    pub features: BTreeMap<String, bool>,
+    /// The team's sharing policy for a team key, in the API's shape; `None` for a personal key.
+    pub sharing_policy: Option<Map<String, Value>>,
+    pub field_types: Vec<String>,
+    pub notify_on_events: Vec<String>,
+    pub etag: Option<String>,
+    pub not_modified: bool,
+}
+
+/// A successful exchange: the decoded body, and what the conditional reads need.
+struct Exchanged {
+    data: Value,
+    etag: Option<String>,
+    not_modified: bool,
+}
+
 /// Client configuration. `ClientOptions::default()` targets production.
 #[derive(Debug, Clone)]
 pub struct ClientOptions {
@@ -665,6 +840,12 @@ impl CredenShare {
 
     /// Encrypt `fields` locally and create a share.
     pub fn create_share(&self, params: CreateParams) -> Result<Share> {
+        self.create_share_with(params, ShareOptions::default())
+    }
+
+    /// [`Self::create_share`] with what [`ShareOptions`] carries, such as activity emails.
+    pub fn create_share_with(&self, params: CreateParams, options: ShareOptions) -> Result<Share> {
+        check_notify_on(&options.notify_on)?;
         let content_key = params.content_key.unwrap_or_else(crypto::new_content_key);
         let blob =
             crypto::encrypt_content(&content_key, &params.fields, params.passcode.as_deref())?;
@@ -695,6 +876,9 @@ impl CredenShare {
         }
         if let Some(seconds) = params.timed_view {
             body.insert("timed_view".into(), json!(seconds));
+        }
+        if !options.notify_on.is_empty() {
+            body.insert("notify_on".into(), json!(options.notify_on));
         }
 
         // Required by the API, not optional. A retried automation must not create a second copy
@@ -733,13 +917,37 @@ impl CredenShare {
 
     /// One page of the account's shares, newest first. Metadata only.
     pub fn list_shares(&self, limit: u32, page: u32) -> Result<SharePage> {
+        self.list_shares_with(None, limit, page)
+    }
+
+    /// [`Self::list_shares`] for [`ListStatus::Active`] or [`ListStatus::Expired`]. The expired
+    /// list is the shares that have ended, by date, by views or by deletion, newest expiry
+    /// first, in the same thin shape. [`Self::get_share`] still reports an ended share as
+    /// [`Error::NotFound`]; this list is where it can be found.
+    pub fn list_shares_by_status(
+        &self,
+        status: ListStatus,
+        limit: u32,
+        page: u32,
+    ) -> Result<SharePage> {
+        self.list_shares_with(Some(status), limit, page)
+    }
+
+    /// Sends `status` only when one was asked for, so [`Self::list_shares`] sends the bytes it
+    /// always has.
+    fn list_shares_with(
+        &self,
+        status: Option<ListStatus>,
+        limit: u32,
+        page: u32,
+    ) -> Result<SharePage> {
         let limit = if limit == 0 { 25 } else { limit };
         let page = if page == 0 { 1 } else { page };
         let data = self.request(
             "GET",
             "/shares",
             None,
-            &[("limit", limit.to_string()), ("page", page.to_string())],
+            &list_query(status, limit, page),
             &[],
         )?;
 
@@ -805,14 +1013,39 @@ impl CredenShare {
     ///
     /// Both are [`Error::Internal`] / [`Error::InternalOwned`] and both are preferable to the
     /// alternative, which is a process that never returns.
-    pub fn for_each_share<F>(&self, limit: u32, mut visit: F) -> Result<()>
+    pub fn for_each_share<F>(&self, limit: u32, visit: F) -> Result<()>
+    where
+        F: FnMut(&ShareSummary) -> Result<()>,
+    {
+        self.for_each_share_with(None, limit, visit)
+    }
+
+    /// [`Self::for_each_share`] over [`ListStatus::Active`] or [`ListStatus::Expired`].
+    pub fn for_each_share_by_status<F>(
+        &self,
+        status: ListStatus,
+        limit: u32,
+        visit: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&ShareSummary) -> Result<()>,
+    {
+        self.for_each_share_with(Some(status), limit, visit)
+    }
+
+    fn for_each_share_with<F>(
+        &self,
+        status: Option<ListStatus>,
+        limit: u32,
+        mut visit: F,
+    ) -> Result<()>
     where
         F: FnMut(&ShareSummary) -> Result<()>,
     {
         let limit = if limit == 0 { 100 } else { limit };
         let mut page = 1u32;
         loop {
-            let batch = self.list_shares(limit, page)?;
+            let batch = self.list_shares_with(status, limit, page)?;
 
             // A server that echoes a constant page number makes progress unobservable, and
             // has_more's last-resort fallback (a full page probably has a successor) would
@@ -1053,13 +1286,33 @@ impl CredenShare {
         // would make every paging figure in the response disagree with the dashboard's.
         // (openapi.yaml documents no limit parameter at all; an earlier revision implied 10
         // for this endpoint, and the deployed default is what this follows.)
+        self.list_requests_with(None, limit, page)
+    }
+
+    /// [`Self::list_requests`] for [`ListStatus::Active`] or [`ListStatus::Expired`]. The
+    /// expired list is the requests that have closed; a deleted request is in neither.
+    pub fn list_requests_by_status(
+        &self,
+        status: ListStatus,
+        limit: u32,
+        page: u32,
+    ) -> Result<RequestPage> {
+        self.list_requests_with(Some(status), limit, page)
+    }
+
+    fn list_requests_with(
+        &self,
+        status: Option<ListStatus>,
+        limit: u32,
+        page: u32,
+    ) -> Result<RequestPage> {
         let limit = if limit == 0 { 25 } else { limit };
         let page = if page == 0 { 1 } else { page };
         let data = self.request(
             "GET",
             "/requests",
             None,
-            &[("limit", limit.to_string()), ("page", page.to_string())],
+            &list_query(status, limit, page),
             &[],
         )?;
 
@@ -1118,14 +1371,39 @@ impl CredenShare {
     /// The same walk as [`Self::for_each_share`], with the same two refusals rather than a
     /// loop: an echoed page number that is not the one requested, and [`MAX_PAGES`] reached
     /// without the API ever signalling the end.
-    pub fn for_each_request<F>(&self, limit: u32, mut visit: F) -> Result<()>
+    pub fn for_each_request<F>(&self, limit: u32, visit: F) -> Result<()>
+    where
+        F: FnMut(&RequestSummary) -> Result<()>,
+    {
+        self.for_each_request_with(None, limit, visit)
+    }
+
+    /// [`Self::for_each_request`] over [`ListStatus::Active`] or [`ListStatus::Expired`].
+    pub fn for_each_request_by_status<F>(
+        &self,
+        status: ListStatus,
+        limit: u32,
+        visit: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&RequestSummary) -> Result<()>,
+    {
+        self.for_each_request_with(Some(status), limit, visit)
+    }
+
+    fn for_each_request_with<F>(
+        &self,
+        status: Option<ListStatus>,
+        limit: u32,
+        mut visit: F,
+    ) -> Result<()>
     where
         F: FnMut(&RequestSummary) -> Result<()>,
     {
         let limit = if limit == 0 { 100 } else { limit };
         let mut page = 1u32;
         loop {
-            let batch = self.list_requests(limit, page)?;
+            let batch = self.list_requests_with(status, limit, page)?;
 
             if batch.page != page {
                 return Err(Error::Internal(
@@ -1355,6 +1633,205 @@ impl CredenShare {
         })
     }
 
+    /// One page of a share's access log: who opened it, newest first, the history the app
+    /// shows under Access History.
+    ///
+    /// Needs the `audit:read` scope, which `shares:read` does not include because the log
+    /// carries recipients' IP addresses; without it this is [`Error::Permission`]. Only the
+    /// share's creator can read the log, for a live share or one that has ended, and any other
+    /// short code is [`Error::NotFound`].
+    pub fn get_access_log(
+        &self,
+        short_code: &str,
+        params: &AccessLogParams,
+    ) -> Result<AccessLogPage> {
+        check_short_code(short_code)?;
+        let mut query: Vec<(&str, String)> = Vec::new();
+        if let Some(limit) = params.limit {
+            if !(1..=100).contains(&limit) {
+                return Err(Error::InvalidArgument(format!(
+                    "an access log limit is 1 to 100, got {limit}"
+                )));
+            }
+            query.push(("limit", limit.to_string()));
+        }
+        if let Some(cursor) = params.cursor.as_deref().filter(|c| !c.is_empty()) {
+            query.push(("cursor", cursor.to_string()));
+        }
+        if let Some(from) = &params.from {
+            query.push(("from", from.clone()));
+        }
+        if let Some(to) = &params.to {
+            query.push(("to", to.clone()));
+        }
+        let mut headers: Vec<(&str, &str)> = Vec::new();
+        if let Some(tag) = params.if_none_match.as_deref().filter(|t| !t.is_empty()) {
+            headers.push(("If-None-Match", tag));
+        }
+
+        let reply = self.exchange(
+            "GET",
+            &format!("/shares/{short_code}/access-log"),
+            None,
+            &query,
+            &headers,
+            true,
+        )?;
+        let data = &reply.data;
+        let text = |value: Option<&Value>| value.and_then(Value::as_str).map(str::to_string);
+        let entries = data
+            .get("entries")
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| AccessLogEntry {
+                        accessed_at: text(row.get("accessed_at")).unwrap_or_default(),
+                        accessed_ip: text(row.get("accessed_ip")).unwrap_or_default(),
+                        platform: text(row.get("platform")).unwrap_or_default(),
+                        user_agent: text(row.get("user_agent")),
+                        failed_passcode: row.get("failed_passcode").and_then(Value::as_bool)
+                            == Some(true),
+                        signed_in: row.get("signed_in").and_then(Value::as_bool) == Some(true),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(AccessLogPage {
+            short_code: text(data.get("short_code"))
+                .filter(|code| !code.is_empty())
+                .unwrap_or_else(|| short_code.to_string()),
+            entries,
+            next_cursor: text(data.get("next_cursor")).filter(|c| !c.is_empty()),
+            retention_days: data
+                .get("retention_days")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            effective_from: text(data.get("effective_from")),
+            effective_to: text(data.get("effective_to")),
+            etag: reply.etag,
+            not_modified: reply.not_modified,
+        })
+    }
+
+    /// Every entry of a share's access log, newest first, handed to `visit`, following each
+    /// page's `next_cursor`.
+    ///
+    /// `params.if_none_match` is ignored: a walk reads every page, and a 304 on the first would
+    /// end it having read nothing. A cursor that fails to move, or [`MAX_PAGES`] pages without
+    /// an end, is refused rather than looped on.
+    pub fn for_each_access_log_entry<F>(
+        &self,
+        short_code: &str,
+        params: &AccessLogParams,
+        mut visit: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&AccessLogEntry) -> Result<()>,
+    {
+        let mut walk = params.clone();
+        walk.if_none_match = None;
+        for _ in 0..MAX_PAGES {
+            let page = self.get_access_log(short_code, &walk)?;
+            for entry in &page.entries {
+                visit(entry)?;
+            }
+            let Some(next) = page.next_cursor else {
+                return Ok(());
+            };
+            if walk.cursor.as_deref() == Some(next.as_str()) {
+                return Err(Error::Internal(
+                    "the access log returned the cursor it was given, so paging cannot be \
+                     trusted to terminate",
+                ));
+            }
+            walk.cursor = Some(next);
+        }
+        Err(Error::InternalOwned(format!(
+            "the access log did not end within {MAX_PAGES} pages"
+        )))
+    }
+
+    /// What this credential may do: its scopes and rate limit, its plan (the team's for a team
+    /// key), the plan's limits and features, the team's sharing policy, and the lists the API
+    /// accepts. No scope is needed.
+    ///
+    /// Pass an earlier `etag` as `if_none_match`: an unchanged answer comes back with
+    /// `not_modified` set rather than as an error.
+    pub fn get_capabilities(&self, if_none_match: Option<&str>) -> Result<Capabilities> {
+        let mut headers: Vec<(&str, &str)> = Vec::new();
+        if let Some(tag) = if_none_match.filter(|t| !t.is_empty()) {
+            headers.push(("If-None-Match", tag));
+        }
+        let reply = self.exchange("GET", "/capabilities", None, &[], &headers, true)?;
+        if reply.not_modified {
+            return Ok(Capabilities {
+                etag: reply.etag,
+                not_modified: true,
+                ..Capabilities::default()
+            });
+        }
+        let data = &reply.data;
+        let text = |value: Option<&Value>| value.and_then(Value::as_str).map(str::to_string);
+        let number = |value: Option<&Value>| value.and_then(Value::as_i64).unwrap_or(0);
+        let strings = |value: Option<&Value>| {
+            value
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let key = data.get("key");
+        let plan = data.get("plan");
+        let limits = data.get("limits");
+        let limit = |name: &str| number(limits.and_then(|l| l.get(name)));
+        Ok(Capabilities {
+            api_version: text(data.get("api_version")).unwrap_or_default(),
+            key: CapabilityKey {
+                key_id: text(key.and_then(|k| k.get("key_id"))).unwrap_or_default(),
+                scopes: strings(key.and_then(|k| k.get("scopes"))),
+                custody_level: number(key.and_then(|k| k.get("custody_level"))),
+                organization_id: text(key.and_then(|k| k.get("organization_id")))
+                    .filter(|org| !org.is_empty()),
+                rate_limit_rpm: number(key.and_then(|k| k.get("rate_limit_rpm"))),
+            },
+            plan: CapabilityPlan {
+                code: text(plan.and_then(|p| p.get("code"))).unwrap_or_default(),
+                name: text(plan.and_then(|p| p.get("name"))).unwrap_or_default(),
+            },
+            limits: CapabilityLimits {
+                max_shares: limit("max_shares"),
+                remaining_shares: limit("remaining_shares"),
+                max_fields: limit("max_fields"),
+                max_days_access_logs: limit("max_days_access_logs"),
+                max_api_keys: limit("max_api_keys"),
+                max_webhooks: limit("max_webhooks"),
+            },
+            features: data
+                .get("features")
+                .and_then(Value::as_object)
+                .map(|features| {
+                    features
+                        .iter()
+                        .map(|(name, on)| (name.clone(), on.as_bool() == Some(true)))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            sharing_policy: data
+                .get("sharing_policy")
+                .and_then(Value::as_object)
+                .cloned(),
+            field_types: strings(data.get("field_types")),
+            notify_on_events: strings(data.get("notify_on_events")),
+            etag: reply.etag,
+            not_modified: false,
+        })
+    }
+
     /// Call an endpoint directly, including one this crate does not model.
     ///
     /// The escape hatch, and the same code path every method above goes through: `query` is
@@ -1390,6 +1867,22 @@ impl CredenShare {
         query: &[(&str, String)],
         headers: &[(&str, &str)],
     ) -> Result<Value> {
+        Ok(self
+            .exchange(method, path, body, query, headers, false)?
+            .data)
+    }
+
+    /// [`Self::request`] with the envelope kept. With `accept_not_modified`, a 304 is an
+    /// answer: the caller sent `If-None-Match`, and "unchanged" is what it asked.
+    fn exchange(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        query: &[(&str, String)],
+        headers: &[(&str, &str)],
+        accept_not_modified: bool,
+    ) -> Result<Exchanged> {
         // A path without the leading slash silently produces something like
         // `https://api.credenshare.io/v1shares`, which is a 404 that reads as a missing
         // endpoint rather than as a typo.
@@ -1451,7 +1944,21 @@ impl CredenShare {
             };
 
             match outcome {
-                Ok(response) => return parse_success(response),
+                Ok(response) => {
+                    let etag = response.header("etag").map(str::to_string);
+                    if accept_not_modified && response.status() == 304 {
+                        return Ok(Exchanged {
+                            data: Value::Object(Map::new()),
+                            etag,
+                            not_modified: true,
+                        });
+                    }
+                    return Ok(Exchanged {
+                        data: parse_success(response)?,
+                        etag,
+                        not_modified: false,
+                    });
+                }
                 Err(ureq::Error::Status(status, response)) => {
                     return Err(error_for(status, response))
                 }
@@ -1473,6 +1980,35 @@ impl CredenShare {
             }
         }
     }
+}
+
+/// A list's query. `status` goes out only when asked for, so the old list methods send the
+/// bytes they always have.
+fn list_query(status: Option<ListStatus>, limit: u32, page: u32) -> Vec<(&'static str, String)> {
+    let mut query = vec![("limit", limit.to_string()), ("page", page.to_string())];
+    if let Some(status) = status {
+        query.push(("status", status.as_str().to_string()));
+    }
+    query
+}
+
+/// The API's rule for `notify_on` (at most four, no repeats, each a known event), applied
+/// before anything is encrypted, so a typo is refused here rather than after a share is sent.
+fn check_notify_on(events: &[String]) -> Result<()> {
+    for (index, event) in events.iter().enumerate() {
+        if !NOTIFY_ON_EVENTS.contains(&event.as_str()) {
+            return Err(Error::InvalidArgument(format!(
+                "notify_on '{event}' is not one of {}",
+                NOTIFY_ON_EVENTS.join(", ")
+            )));
+        }
+        if events[..index].contains(event) {
+            return Err(Error::InvalidArgument(format!(
+                "notify_on lists '{event}' twice"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Reject a short code that could change which endpoint the request reaches.

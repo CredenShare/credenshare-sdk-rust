@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+The /v1 additions of Gitea #404 (who opened a share, what a key may do, the expired lists and
+activity emails) and a local generator. Additive, with no source break: every existing method
+sends the bytes it sent in 0.3.0, `CreateParams` is unchanged (the 0.1.4 exhaustive literal
+still compiles), and the conformance fixture is byte-identical.
+
+### Added
+
+- **`get_access_log` and `for_each_access_log_entry`**: a share's access log, newest first,
+  with `AccessLogParams` (`limit`, `cursor`, `from`, `to`, `if_none_match`), `AccessLogPage`
+  and `AccessLogEntry`. Needs the `audit:read` scope. The walk follows `next_cursor` and stops
+  with `Error::Internal` if a cursor fails to move.
+- **`get_capabilities`**: the key's scopes, its plan's limits and features, the team's sharing
+  policy for a team key, and the field types and activity-email events the API accepts, as
+  `Capabilities`, `CapabilityKey`, `CapabilityPlan` and `CapabilityLimits`.
+- **Conditional reads.** Both return an `etag`; passed back as `if_none_match`, an unchanged
+  answer comes back with `not_modified` set rather than as an error.
+- **`list_shares_by_status`, `for_each_share_by_status`, `list_requests_by_status` and
+  `for_each_request_by_status`** with `ListStatus::{Active, Expired}`. The old list methods are
+  unchanged and send no status.
+- **`create_share_with` and `ShareOptions`**, carrying `notify_on` (with `NOTIFY_ON_EVENTS`),
+  checked as the API checks it. A new `#[non_exhaustive]` options type rather than a field on
+  `CreateParams`, so it can grow in a minor release without breaking a struct literal.
+- **`generate_password`, `generate_passphrase`, `generate_pin` and `strength_of`**, with
+  `PasswordOptions`, `PassphraseOptions` and `Separator`: the app's generator, on this machine,
+  with nothing sent, and available without the `client` feature. Rejection-sampled draws from
+  the OS random source, the EFF long word list included byte-for-byte (attributed in NOTICE),
+  and the app's strength figures. `Generated` keeps its value behind `value()`, withholds it
+  from `Debug`, and wipes it on drop.
+- **`UNLIMITED`** (-1).
+
 ## 0.3.0 — 2026-10-25
 
 The two field types the web app gained on 2026-10-24. Nothing here changes behaviour: a field's

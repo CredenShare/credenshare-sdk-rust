@@ -12,6 +12,7 @@
 pub mod conformance;
 mod crypto;
 mod errors;
+mod generate;
 pub mod webhooks;
 
 #[cfg(feature = "client")]
@@ -24,13 +25,19 @@ pub use crypto::{
     FIELD_TYPES, SEED_LENGTH,
 };
 pub use errors::{ApiDetails, Error, Result};
+pub use generate::{
+    generate_passphrase, generate_password, generate_pin, strength_of, Generated,
+    PassphraseOptions, PasswordOptions, Separator, PASSWORD_SYMBOLS,
+};
 
 #[cfg(feature = "client")]
 pub use client::{
-    ClientOptions, CreateParams, CreateRequestParams, CredenShare, Credential, DailyView,
-    RequestDeletion, RequestField, RequestPage, RequestSummary, SecureRequest, Share, ShareCounts,
-    SharePage, ShareSummary, Stats, Submission, SubmissionPage, DEFAULT_BASE_URL,
-    DEFAULT_LINK_ORIGIN, DEFAULT_MAX_RETRIES, MAX_PAGES,
+    AccessLogEntry, AccessLogPage, AccessLogParams, Capabilities, CapabilityKey, CapabilityLimits,
+    CapabilityPlan, ClientOptions, CreateParams, CreateRequestParams, CredenShare, Credential,
+    DailyView, ListStatus, RequestDeletion, RequestField, RequestPage, RequestSummary,
+    SecureRequest, Share, ShareCounts, ShareOptions, SharePage, ShareSummary, Stats, Submission,
+    SubmissionPage, DEFAULT_BASE_URL, DEFAULT_LINK_ORIGIN, DEFAULT_MAX_RETRIES, MAX_PAGES,
+    NOTIFY_ON_EVENTS, UNLIMITED,
 };
 
 /// The version of this crate.
