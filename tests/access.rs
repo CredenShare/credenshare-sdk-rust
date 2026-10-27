@@ -1,6 +1,7 @@
-//! The /v1 additions of Gitea #404: the access log, capabilities, the expired lists and
-//! activity emails, against a loopback server as in `client.rs`. This one can also send an
-//! `ETag` and a body-less 304, which the conditional reads need.
+//! The /v1 additions of Gitea #404 (the access log, capabilities, the expired lists and
+//! activity emails) and #412 (links on a team's custom domain), against a loopback server as in
+//! `client.rs`. This one can also send an `ETag` and a body-less 304, which the conditional
+//! reads need.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -8,8 +9,9 @@ use std::sync::mpsc;
 use std::thread;
 
 use credenshare::{
-    AccessLogParams, ClientOptions, CreateParams, CredenShare, Error, Field, ListStatus,
-    ShareOptions, FIELD_TYPES, NOTIFY_ON_EVENTS, UNLIMITED,
+    AccessLogParams, ClientOptions, CreateParams, CreateRequestParams, CredenShare, Error, Field,
+    ListStatus, RequestField, ShareOptions, DEFAULT_LINK_ORIGIN, FIELD_TYPES, NOTIFY_ON_EVENTS,
+    UNLIMITED,
 };
 
 const CREDENTIAL: &str = "crs_sk_live_abc123.authsecretvalue.custodysecretvalue";
@@ -89,6 +91,31 @@ impl Stub {
             },
         )
         .expect("building the client")
+    }
+
+    /// A client with no link origin configured, so it asks the API (Gitea #412).
+    fn unconfigured(&self) -> CredenShare {
+        CredenShare::with_options(
+            CREDENTIAL,
+            ClientOptions {
+                base_url: self.base_url.clone(),
+                max_retries: 0,
+                ..Default::default()
+            },
+        )
+        .expect("building the client")
+    }
+
+    /// Every request the server has received so far.
+    fn drain(&self) -> Vec<Captured> {
+        let mut seen = Vec::new();
+        while let Ok(request) = self
+            .requests
+            .recv_timeout(std::time::Duration::from_millis(200))
+        {
+            seen.push(request);
+        }
+        seen
     }
 
     fn next(&self) -> Captured {
@@ -466,4 +493,177 @@ fn notify_on_is_checked_as_the_api_checks_it() {
         );
         assert!(stub.sent_nothing(), "{events:?} reached the API");
     }
+}
+
+// -- links on a team's own domain (Gitea #412) ------------------------------------------------
+
+fn created(code: &str) -> Reply {
+    (201, format!(r#"{{"short_code":"{code}"}}"#), None)
+}
+
+fn capabilities_with_origin(origin: &str) -> Reply {
+    (
+        200,
+        format!(r#"{{"api_version":"1","key":{{"key_id":"abc123"}},"link_origin":{origin}}}"#),
+        None,
+    )
+}
+
+fn capability_calls(requests: &[Captured]) -> usize {
+    requests
+        .iter()
+        .filter(|r| r.target == "/capabilities")
+        .count()
+}
+
+fn share_params() -> CreateParams {
+    CreateParams {
+        title: "t".into(),
+        fields: vec![field()],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_team_keys_links_are_on_its_custom_domain_asked_once() {
+    let stub = Stub::new(vec![
+        created("abc123"),
+        capabilities_with_origin(r#""https://cd-test.credenshare.io""#),
+        created("def456"),
+    ]);
+    let client = stub.unconfigured();
+    let first = client.create_share(share_params()).unwrap();
+    let second = client.create_share(share_params()).unwrap();
+    for share in [&first, &second] {
+        let prefix = format!("https://cd-test.credenshare.io/{}#1", share.short_code);
+        assert!(share.link.starts_with(&prefix), "{}", share.link);
+    }
+    // The link helpers agree with what the creates returned.
+    assert_eq!(
+        client
+            .link_for(&first.short_code, &first.content_key)
+            .unwrap(),
+        first.link
+    );
+    assert_eq!(client.link_origin(), "https://cd-test.credenshare.io");
+    assert_eq!(capability_calls(&stub.drain()), 1);
+}
+
+#[test]
+fn a_configured_origin_wins_and_nothing_is_asked() {
+    let stub = Stub::new(vec![created("abc123")]);
+    let client = CredenShare::with_options(
+        CREDENTIAL,
+        ClientOptions {
+            base_url: stub.base_url.clone(),
+            link_origin: "https://links.example.com/".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let share = client.create_share(share_params()).unwrap();
+    assert!(
+        share.link.starts_with("https://links.example.com/abc123#"),
+        "{}",
+        share.link
+    );
+    let seen = stub.drain();
+    assert_eq!((seen.len(), capability_calls(&seen)), (1, 0));
+}
+
+#[test]
+fn no_team_origin_or_a_failed_answer_gives_the_default() {
+    let answers: Vec<(&str, Reply)> = vec![
+        ("a null origin", capabilities_with_origin("null")),
+        (
+            "no member at all",
+            (200, r#"{"api_version":"1"}"#.into(), None),
+        ),
+        (
+            "a refusal",
+            (403, r#"{"message":"no","error_code":78}"#.into(), None),
+        ),
+        (
+            "a server error",
+            (500, r#"{"message":"boom"}"#.into(), None),
+        ),
+        (
+            "a path",
+            capabilities_with_origin(r#""https://cd.example.com/evil""#),
+        ),
+        (
+            "plain http",
+            capabilities_with_origin(r#""http://cd.example.com""#),
+        ),
+        (
+            "credentials",
+            capabilities_with_origin(r#""https://user@cd.example.com""#),
+        ),
+        (
+            "a query",
+            capabilities_with_origin(r#""https://cd.example.com?x=1""#),
+        ),
+        ("not a string", capabilities_with_origin("42")),
+    ];
+    for (name, answer) in answers {
+        let stub = Stub::new(vec![created("abc123"), answer, created("def456")]);
+        let client = stub.unconfigured();
+        for _ in 0..2 {
+            let share = client
+                .create_share(share_params())
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(
+                share.link.starts_with(&format!("{DEFAULT_LINK_ORIGIN}/")),
+                "{name}: {}",
+                share.link
+            );
+        }
+        // The answer is kept, a "none" or a failure included: one question per client.
+        assert_eq!(capability_calls(&stub.drain()), 1, "{name}");
+    }
+}
+
+#[test]
+fn a_secure_requests_links_are_on_the_team_domain_too() {
+    let stub = Stub::new(vec![
+        created("rq01"),
+        capabilities_with_origin(r#""https://cd-test.credenshare.io""#),
+    ]);
+    let request = stub
+        .unconfigured()
+        .create_request(CreateRequestParams {
+            title: "t".into(),
+            fields: vec![RequestField::new("Password", "password")],
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        request.collect_link,
+        "https://cd-test.credenshare.io/r/rq01"
+    );
+    assert!(request
+        .access_link
+        .starts_with("https://cd-test.credenshare.io/r/rq01#1"));
+}
+
+#[test]
+fn the_capabilities_type_carries_the_origin() {
+    let team = Stub::new(vec![capabilities_with_origin(
+        r#""https://cd-test.credenshare.io""#,
+    )]);
+    assert_eq!(
+        team.unconfigured()
+            .get_capabilities(None)
+            .unwrap()
+            .link_origin
+            .as_deref(),
+        Some("https://cd-test.credenshare.io")
+    );
+    let personal = Stub::new(vec![capabilities_with_origin("null")]);
+    assert!(personal
+        .unconfigured()
+        .get_capabilities(None)
+        .unwrap()
+        .link_origin
+        .is_none());
 }

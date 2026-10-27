@@ -330,6 +330,36 @@ the plan's limits and features, and the lists the API accepts. No scope is neede
 policy for a team key, so it can be met before creating anything, and `None` for a personal
 key. `etag` and `if_none_match` work as they do for the access log.
 
+## Links on a team's own domain
+
+```rust,no_run
+use credenshare::{CredenShare, CreateParams, Field};
+fn main() -> Result<(), credenshare::Error> {
+    let client = CredenShare::new("crs_sk_live_a.b")?; // a team key
+    let share = client.create_share(CreateParams {
+        title: "Deploy key".into(),
+        fields: vec![Field::new("Key", "s3cr3t", "password")],
+        ..Default::default()
+    })?;
+    println!("{}", share.short_code); // share.link: https://links.example.com/<code>#1...
+    println!("{}", client.link_origin()); // the origin this client builds links on
+    Ok(())
+}
+```
+
+A team can serve its links from its own domain. A client whose `ClientOptions::link_origin` is
+empty, the default, asks the API once, on its first create, and builds every link on the team's
+domain when the credential is a team key whose team has one live for new links. A personal key's
+links, and those of a team without a domain, stay on `https://crs.sh`: a team's domain serves
+only that team's shares and requests.
+
+Set `link_origin` to choose the origin yourself, and nothing is asked. The answer is kept for the
+life of the client, a "none" included, and a failed question leaves the client on the default
+rather than failing the create. Only a bare `https://` origin is followed, since the content key
+goes into the links built on it. `link_for`, `collect_link_for` and `access_link_for` use the
+team's domain once the client has learned it, and `Capabilities::link_origin` carries the same
+value.
+
 ## Generating a password, passphrase or PIN
 
 ```rust

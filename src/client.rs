@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use base64::engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD};
@@ -752,6 +753,10 @@ pub struct Capabilities {
     pub sharing_policy: Option<Map<String, Value>>,
     pub field_types: Vec<String>,
     pub notify_on_events: Vec<String>,
+    /// The team's custom domain, such as `https://links.example.com`, for a team key whose team
+    /// has one live for new links; `None` otherwise. The client uses it when
+    /// [`ClientOptions::link_origin`] is empty.
+    pub link_origin: Option<String>,
     pub etag: Option<String>,
     pub not_modified: bool,
 }
@@ -767,6 +772,10 @@ struct Exchanged {
 #[derive(Debug, Clone)]
 pub struct ClientOptions {
     pub base_url: String,
+    /// Where recipient links are built, such as `https://crs.sh`. Set, it is used as given.
+    /// Empty, which is the default, the client asks the API once, on its first create, and uses
+    /// the team's custom domain when the credential is a team key whose team has one; otherwise,
+    /// or when that question fails, [`DEFAULT_LINK_ORIGIN`]. See [`CredenShare::link_origin`].
     pub link_origin: String,
     pub timeout: Duration,
     pub max_retries: u32,
@@ -776,7 +785,7 @@ impl Default for ClientOptions {
     fn default() -> Self {
         Self {
             base_url: DEFAULT_BASE_URL.to_string(),
-            link_origin: DEFAULT_LINK_ORIGIN.to_string(),
+            link_origin: String::new(),
             timeout: Duration::from_secs(30),
             max_retries: DEFAULT_MAX_RETRIES,
         }
@@ -789,6 +798,8 @@ pub struct CredenShare {
     pub credential: Credential,
     options: ClientOptions,
     agent: ureq::Agent,
+    /// The team's custom domain from /v1/capabilities, asked at most once; empty for none.
+    team_origin: OnceLock<String>,
 }
 
 impl CredenShare {
@@ -810,7 +821,46 @@ impl CredenShare {
             credential: Credential::parse(credential)?,
             options,
             agent,
+            team_origin: OnceLock::new(),
         })
+    }
+
+    /// The origin this client builds links on: [`ClientOptions::link_origin`] when it was set;
+    /// otherwise the team's custom domain when the credential is a team key whose team has one
+    /// live for new links; otherwise [`DEFAULT_LINK_ORIGIN`].
+    ///
+    /// The custom domain is read from `/v1/capabilities` at most once per client, on the first
+    /// call to this method or to a create, and the answer is kept, a "none" included. A failed
+    /// read leaves this client on the default rather than failing anything. A team's domain
+    /// serves only that team's shares and requests, which is why only a team key ever gets one.
+    pub fn link_origin(&self) -> String {
+        self.resolve_link_origin();
+        self.origin().to_string()
+    }
+
+    /// What is known now, without asking.
+    fn origin(&self) -> &str {
+        if !self.options.link_origin.is_empty() {
+            return &self.options.link_origin;
+        }
+        match self.team_origin.get() {
+            Some(team) if !team.is_empty() => team,
+            _ => DEFAULT_LINK_ORIGIN,
+        }
+    }
+
+    /// Asks the API for the team's domain once; the creates call it. Never fails.
+    fn resolve_link_origin(&self) {
+        if !self.options.link_origin.is_empty() {
+            return;
+        }
+        self.team_origin.get_or_init(|| {
+            self.get_capabilities(None)
+                .ok()
+                .and_then(|caps| caps.link_origin)
+                .map(|origin| bare_https_origin(&origin))
+                .unwrap_or_default()
+        });
     }
 
     /// Assemble a recipient link.
@@ -820,7 +870,7 @@ impl CredenShare {
     pub fn link_for(&self, short_code: &str, content_key: &[u8]) -> Result<String> {
         Ok(format!(
             "{}/{short_code}#{}",
-            self.options.link_origin,
+            self.origin(),
             crypto::encode_fragment(content_key)?
         ))
     }
@@ -900,6 +950,7 @@ impl CredenShare {
             .ok_or(Error::Internal("the API returned no short_code"))?
             .to_string();
 
+        self.resolve_link_origin();
         Ok(Share {
             link: self.link_for(&short_code, &content_key)?,
             short_code,
@@ -1115,7 +1166,7 @@ impl CredenShare {
     /// Unlike [`Self::link_for`] there is no fragment, because there is no key to put in one:
     /// this link is safe to publish, and holding it lets somebody submit rather than read.
     pub fn collect_link_for(&self, short_code: &str) -> String {
-        format!("{}/r/{short_code}", self.options.link_origin)
+        format!("{}/r/{short_code}", self.origin())
     }
 
     /// Assemble YOUR access link for a request: the seed in the fragment.
@@ -1143,7 +1194,7 @@ impl CredenShare {
         }
         Ok(format!(
             "{}/r/{short_code}#{}",
-            self.options.link_origin,
+            self.origin(),
             crypto::encode_fragment(seed)?
         ))
     }
@@ -1260,6 +1311,7 @@ impl CredenShare {
             .ok_or(Error::Internal("the API returned no short_code"))?
             .to_string();
 
+        self.resolve_link_origin();
         Ok(SecureRequest {
             collect_link: self.collect_link_for(&short_code),
             access_link: self.access_link_for(&short_code, &seed)?,
@@ -1827,6 +1879,7 @@ impl CredenShare {
                 .cloned(),
             field_types: strings(data.get("field_types")),
             notify_on_events: strings(data.get("notify_on_events")),
+            link_origin: text(data.get("link_origin")).filter(|origin| !origin.is_empty()),
             etag: reply.etag,
             not_modified: false,
         })
@@ -1979,6 +2032,29 @@ impl CredenShare {
                 }
             }
         }
+    }
+}
+
+/// `raw` as `https://host[:port]` when it is exactly that, and empty for anything else. The
+/// content key goes into links built on this origin, so an answer that is not a plain https
+/// origin is not followed.
+fn bare_https_origin(raw: &str) -> String {
+    let Some(authority) = raw.trim_end_matches('/').strip_prefix("https://") else {
+        return String::new();
+    };
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    };
+    let host_ok = !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.');
+    let port_ok = port.is_none_or(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    if host_ok && port_ok {
+        format!("https://{authority}")
+    } else {
+        String::new()
     }
 }
 

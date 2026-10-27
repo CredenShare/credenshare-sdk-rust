@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+Links on a team's custom domain (Gitea #412).
+
+### Added
+
+- **Team link origins.** A client whose `ClientOptions::link_origin` is empty reads
+  `link_origin` from `/v1/capabilities` once, on its first create, and builds links on the
+  team's custom domain when the credential is a team key whose team has one live for new links.
+  A personal key, a team without a domain, or a failed read stays on `DEFAULT_LINK_ORIGIN`, and
+  the create never fails for it. Only a bare `https://` origin is followed, since the content
+  key goes into the links built on it.
+- **`CredenShare::link_origin()`**, the origin the client builds links on.
+
+### Changed
+
+- **`ClientOptions::default().link_origin` is empty**, meaning "ask", rather than
+  `DEFAULT_LINK_ORIGIN`. A caller who sets it, to the default or anything else, keeps every link
+  on it and is asked nothing. The field's type is unchanged, so this is not a source break.
+- **`Capabilities` gains `link_origin: Option<String>`.** It is a response type the client
+  builds; only code that constructs one with an exhaustive struct literal needs the new member.
+- **One more request, once per client.** An unconfigured client's first create is followed by
+  one `GET /v1/capabilities`. A client with `link_origin` set sends exactly what it sent in
+  0.4.0.
+- `link_for`, `collect_link_for` and `access_link_for` use the team's domain once the client has
+  learned it.
+
 ## 0.4.0 — 2026-10-26
 
 The /v1 additions of Gitea #404 (who opened a share, what a key may do, the expired lists and
