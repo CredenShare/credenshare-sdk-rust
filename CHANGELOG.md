@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.5.0 — 2026-10-27
 
 Links on a team's custom domain (Gitea #412).
 
